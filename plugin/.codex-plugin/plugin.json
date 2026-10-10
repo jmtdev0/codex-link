@@ -1,0 +1,11 @@
+{
+  "name": "codex-link",
+  "version": "0.1.1",
+  "description": "Cifrado local de extremo a extremo y relé temporal para comunicar dos agentes Codex.",
+  "author": {
+    "name": "Codex Link contributors"
+  },
+  "license": "MIT",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

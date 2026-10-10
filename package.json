@@ -1,0 +1,12 @@
+{
+  "name": "codex-link-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "relay": "node dev-relay/server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

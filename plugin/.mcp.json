@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "codex_link": {
+      "command": "node",
+      "args": ["./src/mcp-server.mjs"],
+      "cwd": "./",
+      "env_vars": [
+        "CODEX_LINK_RELAY_URL",
+        "CODEX_LINK_ACCESS_TOKEN",
+        "CODEX_LINK_SITES_BYPASS_TOKEN",
+        "CODEX_LINK_SITES_ALLOWED_ORIGIN"
+      ],
+      "default_tools_approval_mode": "prompt",
+      "tools": {
+        "codex_link_create_invite": { "approval_mode": "prompt" },
+        "codex_link_join": { "approval_mode": "prompt" },
+        "codex_link_send": { "approval_mode": "prompt" },
+        "codex_link_receive": { "approval_mode": "prompt" },
+        "codex_link_status": { "approval_mode": "prompt" },
+        "codex_link_disconnect": { "approval_mode": "prompt" }
+      }
+    }
+  }
+}
