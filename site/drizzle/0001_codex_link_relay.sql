@@ -4,10 +4,10 @@ CREATE TABLE codex_link_rooms (
   peer_id TEXT,
   expires_at INTEGER NOT NULL
 );
-
+--> statement-breakpoint
 CREATE INDEX idx_codex_link_rooms_expires_at
   ON codex_link_rooms (expires_at);
-
+--> statement-breakpoint
 CREATE TABLE codex_link_messages (
   room_id TEXT NOT NULL,
   recipient_id TEXT NOT NULL,
@@ -19,9 +19,9 @@ CREATE TABLE codex_link_messages (
   PRIMARY KEY (room_id, recipient_id, message_id),
   FOREIGN KEY (room_id) REFERENCES codex_link_rooms (room_id) ON DELETE CASCADE
 );
-
+--> statement-breakpoint
 CREATE INDEX idx_codex_link_messages_queue
   ON codex_link_messages (room_id, recipient_id, expires_at, created_at);
-
+--> statement-breakpoint
 CREATE INDEX idx_codex_link_messages_expires_at
   ON codex_link_messages (expires_at);
