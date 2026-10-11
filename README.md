@@ -26,6 +26,8 @@ No account-wide relay token or Sites bypass token is needed. The plugin uses its
 
 The invitation is a bearer secret: anyone who obtains it can join the room and derive the room keys. Never send the invitation through Codex Link itself. The relay sees the separate room capability, participant/routing metadata, ciphertext sizes, and timing. A relay operator can block, delay, discard, replay, or inject invalid packets, but cannot forge an authenticated message without the E2E key.
 
+See [the second-computer setup guide](SECOND_COMPUTER_SETUP.md) for onboarding another Codex installation.
+
 ## Test locally
 
 Requires Node.js 20 or newer. SQLite-backed D1 integration tests require Node.js 22.5 or newer; they are skipped on older Node versions.
