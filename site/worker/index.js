@@ -1,11 +1,17 @@
 const ROOM_ID = /^[A-Za-z0-9_-]{22}$/;
 const PARTICIPANT_ID = /^[A-Za-z0-9_-]{22}$/;
 const MESSAGE_ID = /^[A-Za-z0-9_-]{22}$/;
+const ROOM_CAPABILITY = /^[A-Za-z0-9_-]{43}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const ROOM_TTL_MS = 30 * 60 * 1000;
 const MESSAGE_TTL_MS = 5 * 60 * 1000;
 const MAX_BODY_BYTES = 24 * 1024;
 const MAX_PENDING = 100;
+const MAX_ACTIVE_ROOMS = 500;
+const MAX_ROOM_CREATES_PER_IP = 8;
+const MAX_ROOM_REQUESTS_PER_MINUTE = 300;
+const CREATE_RATE_WINDOW_MS = 10 * 60 * 1000;
+const ROOM_RATE_WINDOW_MS = 60 * 1000;
 const MAX_WAIT_MS = 15_000;
 const WAIT_POLL_MS = 500;
 const CLEANUP_INTERVAL_MS = 10_000;
@@ -52,6 +58,43 @@ function changes(result) {
   return Number(result?.meta?.changes ?? result?.changes ?? 0);
 }
 
+function hex(bytes) {
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return hex(digest);
+}
+
+async function hmacHex(secret, value) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value)));
+}
+
+function readRoomCapability(request) {
+  const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(request.headers.get("authorization") ?? "");
+  if (!match || !ROOM_CAPABILITY.test(match[1])) {
+    throw new ClientError(401, "A valid room capability is required.");
+  }
+  return match[1];
+}
+
+function equalDigest(left, right) {
+  if (typeof left !== "string" || typeof right !== "string" || left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
 async function first(db, sql, ...values) {
   return db.prepare(sql).bind(...values).first();
 }
@@ -64,6 +107,9 @@ export function createSitesRelay({
   roomTtlMs = ROOM_TTL_MS,
   messageTtlMs = MESSAGE_TTL_MS,
   maxPending = MAX_PENDING,
+  maxActiveRooms = MAX_ACTIVE_ROOMS,
+  maxRoomCreatesPerIp = MAX_ROOM_CREATES_PER_IP,
+  maxRoomRequestsPerMinute = MAX_ROOM_REQUESTS_PER_MINUTE,
   waitPollMs = WAIT_POLL_MS,
   cleanupIntervalMs = CLEANUP_INTERVAL_MS,
 } = {}) {
@@ -78,6 +124,7 @@ export function createSitesRelay({
     cleanupInFlight = db.batch([
       db.prepare("DELETE FROM codex_link_messages WHERE expires_at <= ?").bind(now),
       db.prepare("DELETE FROM codex_link_rooms WHERE expires_at <= ?").bind(now),
+      db.prepare("DELETE FROM codex_link_rate_limits WHERE window_started_at <= ?").bind(now - 24 * 60 * 60 * 1000),
     ]);
     try {
       await cleanupInFlight;
@@ -128,11 +175,34 @@ export function createSitesRelay({
   async function getLiveRoom(db, roomId) {
     const room = await first(
       db,
-      "SELECT room_id, owner_id, peer_id, expires_at FROM codex_link_rooms WHERE room_id = ? AND expires_at > ?",
+      "SELECT room_id, owner_id, peer_id, capability_hash, expires_at FROM codex_link_rooms WHERE room_id = ? AND expires_at > ?",
       roomId,
       Date.now(),
     );
     return room ?? null;
+  }
+
+  async function consumeRateLimit(db, bucketKey, now, windowMs, limit, message) {
+    const result = await first(
+      db,
+      `INSERT INTO codex_link_rate_limits (bucket_key, window_started_at, request_count)
+       VALUES (?, ?, 1)
+       ON CONFLICT(bucket_key) DO UPDATE SET
+         window_started_at = CASE
+           WHEN codex_link_rate_limits.window_started_at <= ? THEN excluded.window_started_at
+           ELSE codex_link_rate_limits.window_started_at
+         END,
+         request_count = CASE
+           WHEN codex_link_rate_limits.window_started_at <= ? THEN 1
+           ELSE codex_link_rate_limits.request_count + 1
+         END
+       RETURNING request_count`,
+      bucketKey,
+      now,
+      now - windowMs,
+      now - windowMs,
+    );
+    if (!result || Number(result.request_count) > limit) throw new ClientError(429, message);
   }
 
   function participantIds(room) {
@@ -169,13 +239,13 @@ export function createSitesRelay({
   }
 
   async function fetchHandler(request, env = {}) {
-    const token = env.CODEX_LINK_ACCESS_TOKEN;
-    if (typeof token !== "string" || token.length < 32 || request.headers.get("authorization") !== `Bearer ${token}`) {
-      return json(401, { error: "Unauthorized." });
-    }
     const db = env.DB;
     if (!db || typeof db.prepare !== "function" || typeof db.batch !== "function") {
       return json(503, { error: "Relay storage is unavailable." });
+    }
+    const rateLimitKey = env.CODEX_LINK_RATE_LIMIT_KEY;
+    if (typeof rateLimitKey !== "string" || rateLimitKey.length < 32) {
+      return json(503, { error: "Relay protections are unavailable." });
     }
 
     try {
@@ -185,38 +255,66 @@ export function createSitesRelay({
       if (parts[0] !== "v1" || parts[1] !== "rooms") return json(404, { error: "Not found." });
 
       if (parts.length === 2 && request.method === "POST") {
+        const capability = readRoomCapability(request);
         const body = await readJson(request);
         if (!ROOM_ID.test(body?.roomId ?? "") || !PARTICIPANT_ID.test(body?.participantId ?? "")) {
           throw new ClientError(400, "Invalid room or participant ID.");
         }
         const now = Date.now();
+        const clientIp = request.headers.get("cf-connecting-ip")?.trim();
+        if (!clientIp || clientIp.length > 128) throw new ClientError(503, "Request could not be rate-limited.");
+        const ipBucket = `create:${await hmacHex(rateLimitKey, clientIp)}`;
+        await consumeRateLimit(
+          db,
+          ipBucket,
+          now,
+          CREATE_RATE_WINDOW_MS,
+          maxRoomCreatesPerIp,
+          "Too many room invitations from this network. Try again later.",
+        );
         const expiresAt = now + roomTtlMs;
+        const capabilityHash = await sha256Hex(capability);
         await run(
           db,
           "DELETE FROM codex_link_rooms WHERE room_id = ? AND expires_at <= ?",
           body.roomId,
           now,
         );
-        try {
-          await run(
-            db,
-            "INSERT INTO codex_link_rooms (room_id, owner_id, peer_id, expires_at) VALUES (?, ?, NULL, ?)",
-            body.roomId,
-            body.participantId,
-            expiresAt,
-          );
-        } catch {
+        const inserted = await run(
+          db,
+          `INSERT INTO codex_link_rooms (room_id, owner_id, peer_id, expires_at, capability_hash)
+           SELECT ?, ?, NULL, ?, ?
+           WHERE (SELECT COUNT(*) FROM codex_link_rooms WHERE expires_at > ?) < ?`,
+          body.roomId,
+          body.participantId,
+          expiresAt,
+          capabilityHash,
+          now,
+          maxActiveRooms,
+        );
+        if (changes(inserted) === 0) {
           const existing = await getLiveRoom(db, body.roomId);
           if (existing) return json(409, { error: "Room already exists." });
-          throw new Error("Unable to create room.");
+          return json(429, { error: "Relay room capacity reached. Try again later." });
         }
         return json(201, { expiresAt: new Date(expiresAt).toISOString() });
       }
 
       const roomId = parts[2];
       if (!ROOM_ID.test(roomId ?? "")) throw new ClientError(400, "Invalid room ID.");
+      const capability = readRoomCapability(request);
+      const capabilityHash = await sha256Hex(capability);
       const room = await getLiveRoom(db, roomId);
-      if (!room) return json(404, { error: "Room not found or expired." });
+      if (!room || !equalDigest(room.capability_hash, capabilityHash)) return json(404, { error: "Room not found or expired." });
+      const roomBucket = `room:${await hmacHex(rateLimitKey, roomId)}`;
+      await consumeRateLimit(
+        db,
+        roomBucket,
+        Date.now(),
+        ROOM_RATE_WINDOW_MS,
+        maxRoomRequestsPerMinute,
+        "This room is sending requests too quickly. Try again shortly.",
+      );
 
       if (parts.length === 4 && parts[3] === "join" && request.method === "POST") {
         const body = await readJson(request);

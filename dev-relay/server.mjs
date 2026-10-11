@@ -46,13 +46,13 @@ function validEnvelope(value, roomId) {
 export function createRelayServer({
   host = "127.0.0.1",
   port = 8787,
-  accessToken = process.env.CODEX_LINK_ACCESS_TOKEN,
+  accessToken = "",
   roomTtlMs = ROOM_TTL_MS,
   messageTtlMs = MESSAGE_TTL_MS,
   maxPending = MAX_PENDING,
 } = {}) {
   if (!new Set(["127.0.0.1", "localhost", "::1"]).has(host) && !accessToken) {
-    throw new Error("A relay exposed beyond loopback requires CODEX_LINK_ACCESS_TOKEN.");
+    throw new Error("A relay exposed beyond loopback requires an explicit access token.");
   }
   const rooms = new Map();
 

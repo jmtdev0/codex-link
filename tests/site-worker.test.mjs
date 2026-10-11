@@ -4,21 +4,24 @@ import { createInvitation, decryptMessage, encryptMessage, parseInvitation, rand
 import { createSitesRelay } from "../site/worker/index.js";
 import { createD1TestDatabase, sqliteAvailable } from "./support/d1-test-db.mjs";
 
-const ACCESS_TOKEN = "test-only-access-token-with-32-bytes";
+const RATE_LIMIT_KEY = "test-only-site-rate-limit-secret-32-bytes";
+const ROOM_CAPABILITY = "A".repeat(43);
+const TEST_IP = "192.0.2.15";
 const ORIGIN = "https://codex-link.test";
 
-function request(worker, path, { db, method = "GET", body, token = ACCESS_TOKEN } = {}) {
+function request(worker, path, { db, method = "GET", body, token = ROOM_CAPABILITY } = {}) {
   const headers = new Headers();
   if (token) headers.set("authorization", `Bearer ${token}`);
+  headers.set("cf-connecting-ip", TEST_IP);
   if (body !== undefined) headers.set("content-type", "application/json");
   return worker.fetch(new Request(`${ORIGIN}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
-  }), { CODEX_LINK_ACCESS_TOKEN: ACCESS_TOKEN, DB: db });
+  }), { CODEX_LINK_RATE_LIMIT_KEY: RATE_LIMIT_KEY, DB: db });
 }
 
-test("D1 relay stores ciphertext only, enforces the token, ACKs and expires messages", { skip: !sqliteAvailable }, async () => {
+test("D1 relay stores ciphertext only, enforces room capabilities, ACKs and expires messages", { skip: !sqliteAvailable }, async () => {
   const db = await createD1TestDatabase();
   const worker = createSitesRelay({ roomTtlMs: 5_000, messageTtlMs: 25, cleanupIntervalMs: 0 });
   const invitation = createInvitation();
@@ -27,9 +30,9 @@ test("D1 relay stores ciphertext only, enforces the token, ACKs and expires mess
 
   try {
     const unavailableRequest = new Request(`${ORIGIN}/v1/rooms`, {
-      headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+      headers: { authorization: `Bearer ${ROOM_CAPABILITY}` },
     });
-    const unavailable = await worker.fetch(unavailableRequest, { CODEX_LINK_ACCESS_TOKEN: ACCESS_TOKEN });
+    const unavailable = await worker.fetch(unavailableRequest, { CODEX_LINK_RATE_LIMIT_KEY: RATE_LIMIT_KEY });
     assert.equal(unavailable.status, 503);
 
     const unauthorized = await request(worker, "/v1/rooms", { db, method: "POST", body: { roomId: invitation.roomId, participantId: alice }, token: "wrong-token" });
@@ -166,6 +169,60 @@ test("the D1 relay bounds request bodies before parsing them", { skip: !sqliteAv
     });
     assert.equal(response.status, 413);
     assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_rooms").get().count, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test("public room creation is rate-limited by a pseudonymized source address", { skip: !sqliteAvailable }, async () => {
+  const db = await createD1TestDatabase();
+  const worker = createSitesRelay({ maxRoomCreatesPerIp: 1, cleanupIntervalMs: 0 });
+  const first = createInvitation();
+  const second = createInvitation();
+
+  try {
+    const created = await request(worker, "/v1/rooms", {
+      db,
+      method: "POST",
+      body: { roomId: first.roomId, participantId: randomId() },
+    });
+    assert.equal(created.status, 201);
+    const limited = await request(worker, "/v1/rooms", {
+      db,
+      method: "POST",
+      body: { roomId: second.roomId, participantId: randomId() },
+    });
+    assert.equal(limited.status, 429);
+    assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_rooms").get().count, 1);
+    const storedBuckets = JSON.stringify(db.sqlite.prepare("SELECT bucket_key FROM codex_link_rate_limits").all());
+    assert.equal(storedBuckets.includes(TEST_IP), false);
+  } finally {
+    db.close();
+  }
+});
+
+test("requests within one room share a persistent rate limit", { skip: !sqliteAvailable }, async () => {
+  const db = await createD1TestDatabase();
+  const worker = createSitesRelay({ maxRoomRequestsPerMinute: 1, cleanupIntervalMs: 0 });
+  const invitation = createInvitation();
+  const owner = randomId();
+  const peer = randomId();
+
+  try {
+    const created = await request(worker, "/v1/rooms", {
+      db,
+      method: "POST",
+      body: { roomId: invitation.roomId, participantId: owner },
+    });
+    assert.equal(created.status, 201);
+    const joined = await request(worker, `/v1/rooms/${invitation.roomId}/join`, {
+      db,
+      method: "POST",
+      body: { participantId: peer },
+    });
+    assert.equal(joined.status, 200);
+    const limited = await request(worker, `/v1/rooms/${invitation.roomId}/status?participantId=${owner}`, { db });
+    assert.equal(limited.status, 429);
   } finally {
     db.close();
   }

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createRoom } from "../plugin/src/relay-client.mjs";
 
+const CAPABILITY = "c".repeat(43);
+
 function saveEnvironment(keys) {
   return new Map(keys.map((key) => [key, process.env[key]]));
 }
@@ -13,7 +15,7 @@ function restoreEnvironment(previous) {
   }
 }
 
-test("private Site service token is sent only to the exact configured Site origin", async () => {
+test("relay requests send only the room capability, never global user tokens", async () => {
   const envKeys = ["CODEX_LINK_ACCESS_TOKEN", "CODEX_LINK_SITES_BYPASS_TOKEN", "CODEX_LINK_SITES_ALLOWED_ORIGIN"];
   const previous = saveEnvironment(envKeys);
   const originalFetch = globalThis.fetch;
@@ -31,17 +33,14 @@ test("private Site service token is sent only to the exact configured Site origi
     process.env.CODEX_LINK_SITES_BYPASS_TOKEN = "test-sites-bypass-token";
     process.env.CODEX_LINK_SITES_ALLOWED_ORIGIN = "https://relay.test.chatgpt.site";
 
-    await createRoom("https://relay.test.chatgpt.site", "a".repeat(22), "b".repeat(22));
-    await createRoom("https://relay.example.test", "c".repeat(22), "d".repeat(22));
-    await assert.rejects(
-      createRoom("https://other.chatgpt.site", "e".repeat(22), "f".repeat(22)),
-      /exact configured relay origin/i,
-    );
+    await createRoom("https://relay.test.chatgpt.site", "a".repeat(22), "b".repeat(22), CAPABILITY);
+    await createRoom("https://relay.example.test", "c".repeat(22), "d".repeat(22), CAPABILITY);
+    await assert.rejects(createRoom("https://other.chatgpt.site", "e".repeat(22), "f".repeat(22)), /room capability/i);
 
-    assert.equal(calls[0].headers.get("authorization"), "Bearer test-app-access-token");
-    assert.equal(calls[0].headers.get("oai-sites-authorization"), "Bearer test-sites-bypass-token");
+    assert.equal(calls[0].headers.get("authorization"), `Bearer ${CAPABILITY}`);
+    assert.equal(calls[0].headers.has("oai-sites-authorization"), false);
     assert.equal(calls[0].redirect, "error");
-    assert.equal(calls[1].headers.get("authorization"), "Bearer test-app-access-token");
+    assert.equal(calls[1].headers.get("authorization"), `Bearer ${CAPABILITY}`);
     assert.equal(calls[1].headers.has("oai-sites-authorization"), false);
     assert.equal(calls[1].redirect, "error");
     assert.equal(calls.length, 2);

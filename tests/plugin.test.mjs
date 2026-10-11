@@ -12,7 +12,7 @@ const mcpServerPath = fileURLToPath(new URL("../plugin/src/mcp-server.mjs", impo
 function startMcp(baseUrl) {
   const child = spawn(process.execPath, [mcpServerPath], {
     cwd: pluginRoot,
-    env: { ...process.env, CODEX_LINK_RELAY_URL: baseUrl, CODEX_LINK_ACCESS_TOKEN: "" },
+    env: { ...process.env, CODEX_LINK_RELAY_URL: baseUrl },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const lines = createInterface({ input: child.stdout });

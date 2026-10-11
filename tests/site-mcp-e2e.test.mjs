@@ -8,14 +8,20 @@ import test from "node:test";
 import { createSitesRelay } from "../site/worker/index.js";
 import { createD1TestDatabase, sqliteAvailable } from "./support/d1-test-db.mjs";
 
-const ACCESS_TOKEN = "test-only-codex-link-site-token-with-over-32-bytes";
+const RATE_LIMIT_KEY = "test-only-codex-link-site-rate-limit-key";
 const pluginRoot = fileURLToPath(new URL("../plugin/", import.meta.url));
 const mcpServerPath = fileURLToPath(new URL("../plugin/src/mcp-server.mjs", import.meta.url));
 
 function startMcp(baseUrl) {
   const child = spawn(process.execPath, [mcpServerPath], {
     cwd: pluginRoot,
-    env: { ...process.env, CODEX_LINK_RELAY_URL: baseUrl, CODEX_LINK_ACCESS_TOKEN: ACCESS_TOKEN },
+    env: {
+      ...process.env,
+      CODEX_LINK_RELAY_URL: baseUrl,
+      CODEX_LINK_ACCESS_TOKEN: "obsolete-user-token-is-ignored",
+      CODEX_LINK_SITES_BYPASS_TOKEN: "obsolete-sites-token-is-ignored",
+      CODEX_LINK_SITES_ALLOWED_ORIGIN: "",
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const lines = createInterface({ input: child.stdout });
@@ -82,13 +88,14 @@ test("packaged MCP clients exchange encrypted messages through the Site Worker a
         const value = incoming.headers[name];
         if (typeof value === "string") headers.set(name, value);
       }
+      headers.set("cf-connecting-ip", "127.0.0.1");
       const request = new Request(`http://127.0.0.1${incoming.url}`, {
         method: incoming.method,
         headers,
         body: body.length ? body : undefined,
       });
       const response = await worker.fetch(request, {
-        CODEX_LINK_ACCESS_TOKEN: ACCESS_TOKEN,
+        CODEX_LINK_RATE_LIMIT_KEY: RATE_LIMIT_KEY,
         DB: db,
       });
       outgoing.writeHead(response.status, Object.fromEntries(response.headers));

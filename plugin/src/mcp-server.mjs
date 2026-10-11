@@ -1,4 +1,4 @@
-import { randomId, createInvitation, parseInvitation, encryptMessage, decryptMessage } from "./protocol.mjs";
+import { randomId, createInvitation, parseInvitation, deriveRoomCapability, encryptMessage, decryptMessage } from "./protocol.mjs";
 import {
   acknowledgeEnvelopes,
   closeRoom,
@@ -99,10 +99,12 @@ async function callTool(name, args = {}) {
     if (sessions.size >= MAX_SESSIONS) throw new Error("Too many active local sessions. Disconnect one first.");
     const invitation = createInvitation();
     const participantId = randomId();
-    const created = await createRoom(baseUrl, invitation.roomId, participantId);
+    const roomCapability = deriveRoomCapability(invitation);
+    const created = await createRoom(baseUrl, invitation.roomId, participantId, roomCapability);
     const sessionId = randomId();
     sessions.set(sessionId, {
       invitation,
+      roomCapability,
       participantId,
       seen: new Set(),
       expiresAt: Date.parse(created.expiresAt),
@@ -118,10 +120,12 @@ async function callTool(name, args = {}) {
     if (sessions.size >= MAX_SESSIONS) throw new Error("Too many active local sessions. Disconnect one first.");
     const invitation = parseInvitation(args.invitation_code);
     const participantId = randomId();
-    const joined = await joinRoom(baseUrl, invitation.roomId, participantId);
+    const roomCapability = deriveRoomCapability(invitation);
+    const joined = await joinRoom(baseUrl, invitation.roomId, participantId, roomCapability);
     const sessionId = randomId();
     sessions.set(sessionId, {
       invitation,
+      roomCapability,
       participantId,
       seen: new Set(),
       expiresAt: Date.parse(joined.expiresAt),
@@ -132,7 +136,7 @@ async function callTool(name, args = {}) {
   if (name === "codex_link_send") {
     const session = getSession(args.session_id);
     const envelope = encryptMessage(session.invitation, session.participantId, args.message);
-    await sendEnvelope(baseUrl, envelope);
+    await sendEnvelope(baseUrl, envelope, session.roomCapability);
     return toolResult(`Sent one encrypted message (${envelope.messageId}). Plaintext was not sent to the relay.`);
   }
 
@@ -143,6 +147,7 @@ async function callTool(name, args = {}) {
       baseUrl,
       session.invitation.roomId,
       session.participantId,
+      session.roomCapability,
       waitMs,
     );
     const acknowledgements = [];
@@ -158,7 +163,7 @@ async function callTool(name, args = {}) {
       }
     }
     if (acknowledgements.length) {
-      await acknowledgeEnvelopes(baseUrl, session.invitation.roomId, session.participantId, acknowledgements);
+      await acknowledgeEnvelopes(baseUrl, session.invitation.roomId, session.participantId, acknowledgements, session.roomCapability);
     }
     const parts = [];
     if (received.length) {
@@ -171,13 +176,13 @@ async function callTool(name, args = {}) {
 
   if (name === "codex_link_status") {
     const session = getSession(args.session_id);
-    const status = await getRoomStatus(baseUrl, session.invitation.roomId, session.participantId);
+    const status = await getRoomStatus(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability);
     return toolResult(`Room is open. Participants joined: ${status.participantCount}/2. Expires ${status.expiresAt}.`);
   }
 
   if (name === "codex_link_disconnect") {
     const session = getSession(args.session_id);
-    await closeRoom(baseUrl, session.invitation.roomId, session.participantId);
+    await closeRoom(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability);
     sessions.delete(args.session_id);
     return toolResult("Room closed and this process forgot the local secret.");
   }
@@ -201,7 +206,7 @@ async function handleRequest(message) {
       result: {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {} },
-        serverInfo: { name: "codex-link", version: "0.1.1" },
+        serverInfo: { name: "codex-link", version: "0.2.0" },
         instructions: "Encrypt all text locally. Never send invitation codes or plaintext to the relay.",
       },
     });

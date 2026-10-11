@@ -1,7 +1,7 @@
 {
   "name": "codex-link",
-  "version": "0.1.1",
-  "description": "Cifrado local de extremo a extremo y relé temporal para comunicar dos agentes Codex.",
+  "version": "0.2.0",
+  "description": "End-to-end encrypted, temporary messaging between paired Codex agents.",
   "author": {
     "name": "Codex Link contributors"
   },

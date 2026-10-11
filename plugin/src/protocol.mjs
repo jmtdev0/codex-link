@@ -52,6 +52,13 @@ export function parseInvitation(code) {
   return { roomId: parts[1], secret: parts[2], code: parts.join(".") };
 }
 
+export function deriveRoomCapability(invitation) {
+  const secret = decode(invitation.secret, SECRET_BYTES, "invitation secret");
+  const roomId = decode(invitation.roomId, ROOM_ID_BYTES, "room ID");
+  const info = Buffer.from("codex-link/v1/relay-capability", "utf8");
+  return encode(hkdfSync("sha256", secret, roomId, info, SECRET_BYTES));
+}
+
 function messageKey(invitation, senderId) {
   const secret = decode(invitation.secret, SECRET_BYTES, "invitation secret");
   decode(invitation.roomId, ROOM_ID_BYTES, "room ID");

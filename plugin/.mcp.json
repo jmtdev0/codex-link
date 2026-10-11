@@ -4,12 +4,7 @@
       "command": "node",
       "args": ["./src/mcp-server.mjs"],
       "cwd": "./",
-      "env_vars": [
-        "CODEX_LINK_RELAY_URL",
-        "CODEX_LINK_ACCESS_TOKEN",
-        "CODEX_LINK_SITES_BYPASS_TOKEN",
-        "CODEX_LINK_SITES_ALLOWED_ORIGIN"
-      ],
+      "env_vars": ["CODEX_LINK_RELAY_URL"],
       "default_tools_approval_mode": "prompt",
       "tools": {
         "codex_link_create_invite": { "approval_mode": "prompt" },
