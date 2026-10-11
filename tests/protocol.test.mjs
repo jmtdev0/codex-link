@@ -1,66 +1,78 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createInvitation, decryptMessage, deriveRoomCapability, encryptMessage, parseInvitation, randomId } from "../plugin/src/protocol.mjs";
+import {
+  createIdentity,
+  createInvitation,
+  decryptMessage,
+  deriveRoomCapability,
+  encryptMessage,
+  parseInvitation,
+  randomId,
+} from "../plugin/src/protocol.mjs";
 import { relayBaseUrl } from "../plugin/src/relay-client.mjs";
 
-test("invitation code contains high-entropy room and secret values and round-trips", () => {
-  const invitation = createInvitation();
-  assert.match(invitation.code, /^cl1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/);
-  assert.deepEqual(parseInvitation(invitation.code), invitation);
+test("v1 and v2 invitation codes round-trip with distinct protocol labels", () => {
+  for (const version of [1, 2]) {
+    const invitation = createInvitation({ version });
+    assert.match(invitation.code, new RegExp(`^cl${version}\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}$`));
+    assert.deepEqual(parseInvitation(invitation.code), invitation);
+  }
 });
 
-test("room capability is stable and domain-separated from the E2E invitation secret", () => {
-  const invitation = createInvitation();
-  const parsed = parseInvitation(invitation.code);
-  const capability = deriveRoomCapability(invitation);
-  assert.match(capability, /^[A-Za-z0-9_-]{43}$/);
-  assert.equal(deriveRoomCapability(parsed), capability);
-  assert.notEqual(capability, invitation.secret);
+test("room capability is stable and protocol-domain-separated from the E2E secret", () => {
+  const legacy = createInvitation({ version: 1 });
+  const current = createInvitation({ version: 2 });
+  assert.match(deriveRoomCapability(legacy), /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(deriveRoomCapability(legacy), legacy.secret);
+  assert.notEqual(deriveRoomCapability(legacy), deriveRoomCapability(current));
+  assert.equal(deriveRoomCapability(parseInvitation(current.code)), deriveRoomCapability(current));
 });
 
-test("AES-GCM envelope decrypts only with the matching room secret", () => {
-  const invitation = createInvitation();
+test("legacy v1 AES-GCM messages remain decryptable", () => {
+  const invitation = createInvitation({ version: 1 });
   const senderId = randomId();
-  const envelope = encryptMessage(invitation, senderId, "hola desde Codex");
-  const seen = new Set();
-  assert.equal(decryptMessage(parseInvitation(invitation.code), envelope, seen), "hola desde Codex");
-  assert.equal(seen.has(envelope.messageId), true);
-
-  const wrongInvitation = { ...invitation, secret: createInvitation().secret };
-  assert.throws(() => decryptMessage(wrongInvitation, envelope), /authentication failed/i);
+  const envelope = encryptMessage(invitation, senderId, "hola desde una versión anterior");
+  assert.equal(decryptMessage(parseInvitation(invitation.code), envelope), "hola desde una versión anterior");
 });
 
-test("tampering, room substitution, and replays are rejected", () => {
+test("v2 authenticates sender identity and encrypts message contents", () => {
   const invitation = createInvitation();
-  const envelope = encryptMessage(invitation, randomId(), "mensaje protegido");
+  const identity = createIdentity();
+  const envelope = encryptMessage(invitation, identity.participantId, "hola desde Codex", identity);
+  assert.equal(decryptMessage(parseInvitation(invitation.code), envelope, new Set()), "hola desde Codex");
+  assert.equal(JSON.stringify(envelope).includes("hola desde Codex"), false);
+});
+
+test("v2 rejects ciphertext, identity substitution, bad signatures, and replays", () => {
+  const invitation = createInvitation();
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const envelope = encryptMessage(invitation, alice.participantId, "mensaje protegido", alice);
   const seen = new Set();
 
   const changed = { ...envelope, ciphertext: `${envelope.ciphertext.slice(0, -1)}${envelope.ciphertext.endsWith("A") ? "B" : "A"}` };
-  assert.throws(() => decryptMessage(invitation, changed), /authentication failed|invalid/i);
+  assert.throws(() => decryptMessage(invitation, changed), /signature|authentication|invalid/i);
+  assert.throws(() => decryptMessage(invitation, { ...envelope, senderId: bob.participantId }), /identity/i);
+  assert.throws(() => decryptMessage({ ...invitation, roomId: createInvitation().roomId }, envelope), /another room/i);
 
-  assert.throws(
-    () => decryptMessage({ ...invitation, roomId: createInvitation().roomId }, envelope),
-    /another room/i,
-  );
-
-  decryptMessage(invitation, envelope, seen);
+  assert.equal(decryptMessage(invitation, envelope, seen), "mensaje protegido");
   assert.throws(() => decryptMessage(invitation, envelope, seen), /replay rejected/i);
 });
 
-test("envelopes contain no plaintext fields and each encryption uses a fresh nonce", () => {
+test("each encryption uses a fresh nonce and message ID", () => {
   const invitation = createInvitation();
-  const senderId = randomId();
-  const one = encryptMessage(invitation, senderId, "no plaintext here");
-  const two = encryptMessage(invitation, senderId, "no plaintext here");
-  assert.equal(JSON.stringify(one).includes("no plaintext here"), false);
+  const identity = createIdentity();
+  const one = encryptMessage(invitation, identity.participantId, "mismo texto", identity);
+  const two = encryptMessage(invitation, identity.participantId, "mismo texto", identity);
   assert.notEqual(one.nonce, two.nonce);
   assert.notEqual(one.messageId, two.messageId);
 });
 
 test("empty and over-limit messages are rejected", () => {
   const invitation = createInvitation();
-  assert.throws(() => encryptMessage(invitation, randomId(), "   "), /non-empty/i);
-  assert.throws(() => encryptMessage(invitation, randomId(), "x".repeat(9_000)), /8 KiB/i);
+  const identity = createIdentity();
+  assert.throws(() => encryptMessage(invitation, identity.participantId, "   ", identity), /non-empty/i);
+  assert.throws(() => encryptMessage(invitation, identity.participantId, "x".repeat(9_000), identity), /8 KiB/i);
 });
 
 test("remote relay configuration requires HTTPS but no user-level relay tokens", () => {

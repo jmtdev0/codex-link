@@ -57,14 +57,18 @@ export function relayBaseUrl() {
   return url.toString().replace(/\/$/, "");
 }
 
-export function createRoom(baseUrl, roomId, participantId, roomCapability) {
-  return request(baseUrl, "/v1/rooms", { method: "POST", body: { roomId, participantId }, roomCapability });
+export function createRoom(baseUrl, roomId, participantId, roomCapability, { protocolVersion = 1, publicKey } = {}) {
+  const body = { roomId, participantId, protocolVersion };
+  if (publicKey !== undefined) body.publicKey = publicKey;
+  return request(baseUrl, "/v1/rooms", { method: "POST", body, roomCapability });
 }
 
-export function joinRoom(baseUrl, roomId, participantId, roomCapability) {
+export function joinRoom(baseUrl, roomId, participantId, roomCapability, { protocolVersion = 1, publicKey } = {}) {
+  const body = { participantId, protocolVersion };
+  if (publicKey !== undefined) body.publicKey = publicKey;
   return request(baseUrl, `/v1/rooms/${encodeURIComponent(roomId)}/join`, {
     method: "POST",
-    body: { participantId },
+    body,
     roomCapability,
   });
 }
@@ -102,6 +106,14 @@ export function acknowledgeEnvelopes(baseUrl, roomId, participantId, messageIds,
 export function closeRoom(baseUrl, roomId, participantId, roomCapability) {
   return request(baseUrl, `/v1/rooms/${encodeURIComponent(roomId)}`, {
     method: "DELETE",
+    body: { participantId },
+    roomCapability,
+  });
+}
+
+export function leaveRoom(baseUrl, roomId, participantId, roomCapability) {
+  return request(baseUrl, `/v1/rooms/${encodeURIComponent(roomId)}/leave`, {
+    method: "POST",
     body: { participantId },
     roomCapability,
   });

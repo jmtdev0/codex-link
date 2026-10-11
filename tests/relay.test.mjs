@@ -7,7 +7,7 @@ import {
   receiveEnvelopes,
   sendEnvelope,
 } from "../plugin/src/relay-client.mjs";
-import { createInvitation, decryptMessage, deriveRoomCapability, encryptMessage, randomId } from "../plugin/src/protocol.mjs";
+import { createIdentity, createInvitation, decryptMessage, deriveRoomCapability, encryptMessage, randomId } from "../plugin/src/protocol.mjs";
 import { createRelayServer } from "../dev-relay/server.mjs";
 
 test("two participants exchange only ciphertext through the volatile relay", async (t) => {
@@ -16,7 +16,7 @@ test("two participants exchange only ciphertext through the volatile relay", asy
   const baseUrl = `http://127.0.0.1:${address.port}`;
   t.after(() => relay.close());
 
-  const invitation = createInvitation();
+  const invitation = createInvitation({ version: 1 });
   const capability = deriveRoomCapability(invitation);
   const alice = randomId();
   const bob = randomId();
@@ -46,14 +46,14 @@ test("the relay rejects a third participant and does not log or persist messages
   const baseUrl = `http://127.0.0.1:${address.port}`;
   t.after(() => relay.close());
 
-  const invitation = createInvitation();
+  const invitation = createInvitation({ version: 1 });
   const capability = deriveRoomCapability(invitation);
   const alice = randomId();
   const bob = randomId();
   const carol = randomId();
   await createRoom(baseUrl, invitation.roomId, alice, capability);
   await joinRoom(baseUrl, invitation.roomId, bob, capability);
-  await assert.rejects(joinRoom(baseUrl, invitation.roomId, carol, capability), /two participants/i);
+  await assert.rejects(joinRoom(baseUrl, invitation.roomId, carol, capability), /maximum 2/i);
   assert.equal(relay.rooms.size, 1);
   assert.equal([...relay.rooms.values()][0].participants.size, 2);
 });
@@ -64,7 +64,7 @@ test("messages are delivered via a bounded wait without durable storage", async 
   const baseUrl = `http://127.0.0.1:${address.port}`;
   t.after(() => relay.close());
 
-  const invitation = createInvitation();
+  const invitation = createInvitation({ version: 1 });
   const capability = deriveRoomCapability(invitation);
   const alice = randomId();
   const bob = randomId();
@@ -84,7 +84,7 @@ test("unacknowledged ciphertext expires from the volatile room queue", async (t)
   const baseUrl = `http://127.0.0.1:${address.port}`;
   t.after(() => relay.close());
 
-  const invitation = createInvitation();
+  const invitation = createInvitation({ version: 1 });
   const capability = deriveRoomCapability(invitation);
   const alice = randomId();
   const bob = randomId();
@@ -99,4 +99,59 @@ test("unacknowledged ciphertext expires from the volatile room queue", async (t)
 
 test("development relay refuses non-loopback binding without an explicit access token", () => {
   assert.throws(() => createRelayServer({ host: "0.0.0.0", port: 0, accessToken: "" }), /requires an explicit access token/i);
+});
+
+test("v2 group rooms authenticate senders and fan out ciphertext to every other member", async (t) => {
+  const relay = createRelayServer({ port: 0 });
+  const address = await relay.listen();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  t.after(() => relay.close());
+
+  const invitation = createInvitation();
+  const capability = deriveRoomCapability(invitation);
+  const identities = Array.from({ length: 3 }, () => createIdentity());
+  const [alice, bob, carol] = identities;
+  await createRoom(baseUrl, invitation.roomId, alice.participantId, capability, {
+    protocolVersion: 2,
+    publicKey: alice.publicKey,
+  });
+  for (const identity of [bob, carol]) {
+    await joinRoom(baseUrl, invitation.roomId, identity.participantId, capability, {
+      protocolVersion: 2,
+      publicKey: identity.publicKey,
+    });
+  }
+
+  const plaintext = "mensaje para todo el grupo";
+  const envelope = encryptMessage(invitation, alice.participantId, plaintext, alice);
+  await sendEnvelope(baseUrl, envelope, capability);
+  for (const identity of [bob, carol]) {
+    const pending = await receiveEnvelopes(baseUrl, invitation.roomId, identity.participantId, capability);
+    assert.equal(pending.messages.length, 1);
+    assert.equal(decryptMessage(invitation, pending.messages[0]), plaintext);
+    assert.equal(JSON.stringify(pending).includes(plaintext), false);
+  }
+
+  const forged = { ...envelope, senderId: bob.participantId };
+  await assert.rejects(async () => decryptMessage(invitation, forged), /identity/i);
+});
+
+test("v2 group rooms cap membership at eight while v1 stays pairwise", async (t) => {
+  const relay = createRelayServer({ port: 0 });
+  const address = await relay.listen();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  t.after(() => relay.close());
+
+  const invitation = createInvitation();
+  const capability = deriveRoomCapability(invitation);
+  const identities = Array.from({ length: 9 }, () => createIdentity());
+  const [owner, ...others] = identities;
+  await createRoom(baseUrl, invitation.roomId, owner.participantId, capability, { protocolVersion: 2, publicKey: owner.publicKey });
+  for (const identity of others.slice(0, 7)) {
+    await joinRoom(baseUrl, invitation.roomId, identity.participantId, capability, { protocolVersion: 2, publicKey: identity.publicKey });
+  }
+  await assert.rejects(
+    joinRoom(baseUrl, invitation.roomId, others[7].participantId, capability, { protocolVersion: 2, publicKey: others[7].publicKey }),
+    /maximum 8/i,
+  );
 });

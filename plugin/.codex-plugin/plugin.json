@@ -1,7 +1,7 @@
 {
   "name": "codex-link",
-  "version": "0.3.0",
-  "description": "End-to-end encrypted, temporary messaging between paired Codex agents.",
+  "version": "0.4.0",
+  "description": "End-to-end encrypted group messaging between Codex agents and people.",
   "author": {
     "name": "Codex Link contributors"
   },

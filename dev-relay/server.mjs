@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -6,6 +7,7 @@ const ROOM_ID = /^[A-Za-z0-9_-]{22}$/;
 const PARTICIPANT_ID = /^[A-Za-z0-9_-]{22}$/;
 const MESSAGE_ID = /^[A-Za-z0-9_-]{22}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
+const MAX_ROOM_PARTICIPANTS = 8;
 const ROOM_TTL_MS = 30 * 60 * 1000;
 const MESSAGE_TTL_MS = 5 * 60 * 1000;
 const MAX_BODY_BYTES = 24 * 1024;
@@ -33,14 +35,25 @@ async function readBody(request) {
 
 function validEnvelope(value, roomId) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const fields = ["v", "roomId", "senderId", "messageId", "nonce", "ciphertext", "tag"];
+  const fields = value.v === 2
+    ? ["v", "roomId", "senderId", "messageId", "nonce", "ciphertext", "tag", "publicKey", "signature"]
+    : ["v", "roomId", "senderId", "messageId", "nonce", "ciphertext", "tag"];
   if (Object.keys(value).length !== fields.length || Object.keys(value).some((key) => !fields.includes(key))) return false;
-  if (value.v !== 1 || value.roomId !== roomId) return false;
+  if ((value.v !== 1 && value.v !== 2) || value.roomId !== roomId) return false;
   if (!PARTICIPANT_ID.test(value.senderId) || !MESSAGE_ID.test(value.messageId)) return false;
   if (!BASE64URL.test(value.nonce) || Buffer.from(value.nonce, "base64url").length !== 12) return false;
   if (!BASE64URL.test(value.tag) || Buffer.from(value.tag, "base64url").length !== 16) return false;
   if (!BASE64URL.test(value.ciphertext) || Buffer.from(value.ciphertext, "base64url").length > 9 * 1024) return false;
+  if (value.v === 2 && (!BASE64URL.test(value.publicKey) || Buffer.from(value.publicKey, "base64url").length !== 44 ||
+      !BASE64URL.test(value.signature) || Buffer.from(value.signature, "base64url").length !== 64)) return false;
   return true;
+}
+
+function identityParticipantId(publicKey) {
+  if (!BASE64URL.test(publicKey ?? "")) return null;
+  const bytes = Buffer.from(publicKey, "base64url");
+  if (bytes.length !== 44) return null;
+  return createHash("sha256").update(bytes).digest().subarray(0, 16).toString("base64url");
 }
 
 export function createRelayServer({
@@ -89,15 +102,24 @@ export function createRelayServer({
         if (!ROOM_ID.test(body?.roomId ?? "") || !PARTICIPANT_ID.test(body?.participantId ?? "")) {
           return json(response, 400, { error: "Invalid room or participant ID." });
         }
+        const protocolVersion = body.protocolVersion ?? 1;
+        if ((protocolVersion !== 1 && protocolVersion !== 2) ||
+            (protocolVersion === 2 && identityParticipantId(body.publicKey) !== body.participantId) ||
+            (protocolVersion === 1 && body.publicKey !== undefined)) {
+          return json(response, 400, { error: "Invalid protocol version or signing identity." });
+        }
         if (rooms.has(body.roomId)) return json(response, 409, { error: "Room already exists." });
         const room = {
           expiresAt: Date.now() + roomTtlMs,
+          protocolVersion,
+          ownerId: body.participantId,
           participants: new Set([body.participantId]),
+          publicKeys: new Map([[body.participantId, body.publicKey ?? null]]),
           queues: new Map([[body.participantId, new Map()]]),
           waiters: new Map(),
         };
         rooms.set(body.roomId, room);
-        return json(response, 201, { expiresAt: new Date(room.expiresAt).toISOString() });
+        return json(response, 201, { expiresAt: new Date(room.expiresAt).toISOString(), participantCount: 1, protocolVersion });
       }
 
       const roomId = parts[2];
@@ -109,30 +131,55 @@ export function createRelayServer({
         const body = await readBody(request);
         const participantId = body?.participantId;
         if (!PARTICIPANT_ID.test(participantId ?? "")) return json(response, 400, { error: "Invalid participant ID." });
-        if (!room.participants.has(participantId) && room.participants.size >= 2) {
-          return json(response, 409, { error: "This prototype supports two participants per room." });
+        const protocolVersion = body.protocolVersion ?? 1;
+        if (protocolVersion !== room.protocolVersion ||
+            (protocolVersion === 2 && identityParticipantId(body.publicKey) !== participantId) ||
+            (protocolVersion === 1 && body.publicKey !== undefined)) {
+          return json(response, 409, { error: "Invalid protocol version or signing identity for this room." });
+        }
+        const existingPublicKey = room.publicKeys.get(participantId);
+        if (room.participants.has(participantId) && existingPublicKey !== (body.publicKey ?? null)) {
+          return json(response, 409, { error: "This participant ID is bound to another signing key." });
+        }
+        const maxParticipants = room.protocolVersion === 2 ? MAX_ROOM_PARTICIPANTS : 2;
+        if (!room.participants.has(participantId) && room.participants.size >= maxParticipants) {
+          return json(response, 409, { error: `This room is full (maximum ${maxParticipants} participants).` });
         }
         room.participants.add(participantId);
+        room.publicKeys.set(participantId, body.publicKey ?? null);
         room.queues.set(participantId, room.queues.get(participantId) ?? new Map());
-        return json(response, 200, { expiresAt: new Date(room.expiresAt).toISOString(), participantCount: room.participants.size });
+        return json(response, 200, { expiresAt: new Date(room.expiresAt).toISOString(), participantCount: room.participants.size, participants: [...room.participants], protocolVersion });
       }
 
       if (parts.length === 4 && parts[3] === "status" && request.method === "GET") {
         const participantId = url.searchParams.get("participantId");
         if (!room.participants.has(participantId)) return json(response, 403, { error: "Participant is not in this room." });
-        return json(response, 200, { participantCount: room.participants.size, expiresAt: new Date(room.expiresAt).toISOString() });
+        return json(response, 200, {
+          participantCount: room.participants.size,
+          participants: [...room.participants],
+          protocolVersion: room.protocolVersion,
+          maxParticipants: room.protocolVersion === 2 ? MAX_ROOM_PARTICIPANTS : 2,
+          expiresAt: new Date(room.expiresAt).toISOString(),
+        });
       }
 
       if (parts.length === 4 && parts[3] === "messages" && request.method === "POST") {
         const envelope = await readBody(request);
-        if (!validEnvelope(envelope, roomId) || !room.participants.has(envelope.senderId)) {
+        if (!validEnvelope(envelope, roomId) || envelope.v !== room.protocolVersion ||
+            !room.participants.has(envelope.senderId) ||
+            (room.protocolVersion === 2 && room.publicKeys.get(envelope.senderId) !== envelope.publicKey)) {
           return json(response, 400, { error: "Invalid encrypted envelope or sender." });
         }
-        if (room.participants.size < 2) return json(response, 409, { error: "The peer has not joined yet." });
+        if (room.participants.size < 2) return json(response, 409, { error: "No other participant has joined yet." });
         const recipients = [...room.participants].filter((id) => id !== envelope.senderId);
+        if (recipients.some((recipientId) => {
+          const queue = room.queues.get(recipientId);
+          return queue.size >= maxPending && !queue.has(envelope.messageId);
+        })) {
+          return json(response, 429, { error: "A participant queue is full; retry this message later." });
+        }
         for (const recipientId of recipients) {
           const queue = room.queues.get(recipientId);
-          if (queue.size >= maxPending) return json(response, 429, { error: "Recipient queue is full." });
           queue.set(envelope.messageId, { envelope, expiresAt: Date.now() + messageTtlMs });
           for (const wake of room.waiters.get(recipientId) ?? []) wake();
         }
@@ -175,9 +222,26 @@ export function createRelayServer({
         return json(response, 200, { acknowledged: messageIds.length });
       }
 
+      if (parts.length === 4 && parts[3] === "leave" && request.method === "POST") {
+        const body = await readBody(request);
+        if (!room.participants.has(body?.participantId)) return json(response, 403, { error: "Participant is not in this room." });
+        if (body.participantId === room.ownerId) {
+          return json(response, 409, { error: "The room owner must close the room instead of leaving it." });
+        }
+        room.participants.delete(body.participantId);
+        room.publicKeys.delete(body.participantId);
+        room.queues.delete(body.participantId);
+        for (const wake of room.waiters.get(body.participantId) ?? []) wake();
+        room.waiters.delete(body.participantId);
+        return json(response, 200, { left: true });
+      }
+
       if (parts.length === 3 && request.method === "DELETE") {
         const body = await readBody(request);
         if (!room.participants.has(body?.participantId)) return json(response, 403, { error: "Participant is not in this room." });
+        if (room.protocolVersion === 2 && body.participantId !== room.ownerId) {
+          return json(response, 403, { error: "Only the room owner can close this group room. Other participants should leave." });
+        }
         rooms.delete(roomId);
         for (const waiters of room.waiters.values()) for (const wake of waiters) wake();
         return json(response, 200, { closed: true });

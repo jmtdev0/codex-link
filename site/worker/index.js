@@ -3,6 +3,7 @@ const PARTICIPANT_ID = /^[A-Za-z0-9_-]{22}$/;
 const MESSAGE_ID = /^[A-Za-z0-9_-]{22}$/;
 const ROOM_CAPABILITY = /^[A-Za-z0-9_-]{43}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
+const MAX_ROOM_PARTICIPANTS = 8;
 const ROOM_TTL_MS = 30 * 60 * 1000;
 const MESSAGE_TTL_MS = 5 * 60 * 1000;
 const MAX_BODY_BYTES = 24 * 1024;
@@ -45,13 +46,30 @@ function encodedLength(value) {
 
 function validEnvelope(value, roomId) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const fields = ["v", "roomId", "senderId", "messageId", "nonce", "ciphertext", "tag"];
+  const fields = value.v === 2
+    ? ["v", "roomId", "senderId", "messageId", "nonce", "ciphertext", "tag", "publicKey", "signature"]
+    : ["v", "roomId", "senderId", "messageId", "nonce", "ciphertext", "tag"];
   if (Object.keys(value).length !== fields.length || Object.keys(value).some((key) => !fields.includes(key))) return false;
-  if (value.v !== 1 || value.roomId !== roomId) return false;
+  if ((value.v !== 1 && value.v !== 2) || value.roomId !== roomId) return false;
   if (!PARTICIPANT_ID.test(value.senderId) || !MESSAGE_ID.test(value.messageId)) return false;
   if (encodedLength(value.nonce) !== 12 || encodedLength(value.tag) !== 16) return false;
   const ciphertextLength = encodedLength(value.ciphertext);
+  if (value.v === 2 && (encodedLength(value.publicKey) !== 44 || encodedLength(value.signature) !== 64)) return false;
   return ciphertextLength > 0 && ciphertextLength <= 9 * 1024;
+}
+
+function decodeBase64Url(value) {
+  return Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0));
+}
+
+function encodeBase64Url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function identityParticipantId(publicKey) {
+  if (encodedLength(publicKey) !== 44) return null;
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", decodeBase64Url(publicKey)));
+  return encodeBase64Url(digest.slice(0, 16));
 }
 
 function changes(result) {
@@ -175,7 +193,7 @@ export function createSitesRelay({
   async function getLiveRoom(db, roomId) {
     const room = await first(
       db,
-      "SELECT room_id, owner_id, peer_id, capability_hash, expires_at FROM codex_link_rooms WHERE room_id = ? AND expires_at > ?",
+      "SELECT room_id, owner_id, peer_id, capability_hash, expires_at, protocol_version FROM codex_link_rooms WHERE room_id = ? AND expires_at > ?",
       roomId,
       Date.now(),
     );
@@ -205,8 +223,11 @@ export function createSitesRelay({
     if (!result || Number(result.request_count) > limit) throw new ClientError(429, message);
   }
 
-  function participantIds(room) {
-    return [room.owner_id, room.peer_id].filter(Boolean);
+  async function readParticipants(db, roomId) {
+    const result = await db.prepare(
+      "SELECT participant_id AS participantId, role, public_key AS publicKey FROM codex_link_room_members WHERE room_id = ? ORDER BY joined_at, participant_id",
+    ).bind(roomId).all();
+    return result?.results ?? [];
   }
 
   async function readPending(db, roomId, participantId, limit) {
@@ -257,8 +278,16 @@ export function createSitesRelay({
       if (parts.length === 2 && request.method === "POST") {
         const capability = readRoomCapability(request);
         const body = await readJson(request);
-        if (!ROOM_ID.test(body?.roomId ?? "") || !PARTICIPANT_ID.test(body?.participantId ?? "")) {
+        const protocolVersion = body?.protocolVersion ?? 1;
+        if (!ROOM_ID.test(body?.roomId ?? "") || !PARTICIPANT_ID.test(body?.participantId ?? "") ||
+            (protocolVersion !== 1 && protocolVersion !== 2)) {
           throw new ClientError(400, "Invalid room or participant ID.");
+        }
+        if (protocolVersion === 2 && await identityParticipantId(body?.publicKey) !== body.participantId) {
+          throw new ClientError(400, "The participant ID does not match its signing public key.");
+        }
+        if (protocolVersion === 1 && body?.publicKey !== undefined) {
+          throw new ClientError(400, "Legacy rooms cannot register a signing public key.");
         }
         const now = Date.now();
         const clientIp = request.headers.get("cf-connecting-ip")?.trim();
@@ -280,24 +309,27 @@ export function createSitesRelay({
           body.roomId,
           now,
         );
-        const inserted = await run(
-          db,
-          `INSERT INTO codex_link_rooms (room_id, owner_id, peer_id, expires_at, capability_hash)
-           SELECT ?, ?, NULL, ?, ?
-           WHERE (SELECT COUNT(*) FROM codex_link_rooms WHERE expires_at > ?) < ?`,
-          body.roomId,
-          body.participantId,
-          expiresAt,
-          capabilityHash,
-          now,
-          maxActiveRooms,
-        );
+        const [inserted] = await db.batch([
+          db.prepare(
+            `INSERT INTO codex_link_rooms (room_id, owner_id, peer_id, expires_at, capability_hash, protocol_version)
+             SELECT ?, ?, NULL, ?, ?, ?
+             WHERE (SELECT COUNT(*) FROM codex_link_rooms WHERE expires_at > ?) < ?`,
+          ).bind(body.roomId, body.participantId, expiresAt, capabilityHash, protocolVersion, now, maxActiveRooms),
+          db.prepare(
+            `INSERT INTO codex_link_room_members (room_id, participant_id, role, public_key, joined_at)
+             SELECT ?, ?, 'owner', ?, ? WHERE EXISTS (SELECT 1 FROM codex_link_rooms WHERE room_id = ?)`
+          ).bind(body.roomId, body.participantId, body.publicKey ?? null, now, body.roomId),
+        ]);
         if (changes(inserted) === 0) {
           const existing = await getLiveRoom(db, body.roomId);
           if (existing) return json(409, { error: "Room already exists." });
           return json(429, { error: "Relay room capacity reached. Try again later." });
         }
-        return json(201, { expiresAt: new Date(expiresAt).toISOString() });
+        return json(201, {
+          expiresAt: new Date(expiresAt).toISOString(),
+          participantCount: 1,
+          protocolVersion,
+        });
       }
 
       const roomId = parts[2];
@@ -320,78 +352,145 @@ export function createSitesRelay({
         const body = await readJson(request);
         const participantId = body?.participantId;
         if (!PARTICIPANT_ID.test(participantId ?? "")) throw new ClientError(400, "Invalid participant ID.");
-        if (participantId !== room.owner_id && room.peer_id && participantId !== room.peer_id) {
-          return json(409, { error: "This prototype supports two participants per room." });
+        const protocolVersion = body?.protocolVersion ?? 1;
+        if (protocolVersion !== room.protocol_version) {
+          return json(409, { error: "The invitation uses a different protocol version." });
         }
-        await run(
+        if (protocolVersion === 2 && await identityParticipantId(body?.publicKey) !== participantId) {
+          throw new ClientError(400, "The participant ID does not match its signing public key.");
+        }
+        if (protocolVersion === 1 && body?.publicKey !== undefined) {
+          throw new ClientError(400, "Legacy rooms cannot register a signing public key.");
+        }
+
+        const publicKey = body.publicKey ?? null;
+        const existing = await first(
           db,
-          "UPDATE codex_link_rooms SET peer_id = ? WHERE room_id = ? AND expires_at > ? AND (peer_id IS NULL OR peer_id = ?)",
-          participantId === room.owner_id ? room.peer_id : participantId,
+          "SELECT role, public_key FROM codex_link_room_members WHERE room_id = ? AND participant_id = ?",
           roomId,
-          Date.now(),
           participantId,
         );
-        const joined = await getLiveRoom(db, roomId);
-        if (!joined) return json(404, { error: "Room not found or expired." });
-        if (!participantIds(joined).includes(participantId)) {
-          return json(409, { error: "This prototype supports two participants per room." });
+        if (existing) {
+          if (existing.public_key !== publicKey) {
+            return json(409, { error: "This participant ID is already bound to a different signing key." });
+          }
+        } else {
+          const maxParticipants = protocolVersion === 2 ? MAX_ROOM_PARTICIPANTS : 2;
+          const inserted = await run(
+            db,
+            `INSERT OR IGNORE INTO codex_link_room_members (room_id, participant_id, role, public_key, joined_at)
+             SELECT ?, ?, 'member', ?, ?
+             WHERE (SELECT COUNT(*) FROM codex_link_room_members WHERE room_id = ?) < ?`,
+            roomId,
+            participantId,
+            publicKey,
+            Date.now(),
+            roomId,
+            maxParticipants,
+          );
+          if (changes(inserted) === 0) return json(409, { error: `This room is full (maximum ${maxParticipants} participants).` });
+          await run(
+            db,
+            "UPDATE codex_link_rooms SET peer_id = COALESCE(peer_id, ?) WHERE room_id = ? AND owner_id != ?",
+            participantId,
+            roomId,
+            participantId,
+          );
         }
+        const participants = await readParticipants(db, roomId);
         return json(200, {
-          expiresAt: new Date(joined.expires_at).toISOString(),
-          participantCount: participantIds(joined).length,
+          expiresAt: new Date(room.expires_at).toISOString(),
+          participantCount: participants.length,
+          participants: participants.map(({ participantId, role }) => ({ participantId, role })),
+          protocolVersion,
         });
       }
 
       if (parts.length === 4 && parts[3] === "status" && request.method === "GET") {
         const participantId = url.searchParams.get("participantId");
-        if (!participantIds(room).includes(participantId)) return json(403, { error: "Participant is not in this room." });
-        return json(200, { participantCount: participantIds(room).length, expiresAt: new Date(room.expires_at).toISOString() });
+        const participants = await readParticipants(db, roomId);
+        if (!participants.some((member) => member.participantId === participantId)) {
+          return json(403, { error: "Participant is not in this room." });
+        }
+        return json(200, {
+          participantCount: participants.length,
+          participants: participants.map(({ participantId, role }) => ({ participantId, role })),
+          protocolVersion: room.protocol_version,
+          maxParticipants: room.protocol_version === 2 ? MAX_ROOM_PARTICIPANTS : 2,
+          expiresAt: new Date(room.expires_at).toISOString(),
+        });
       }
 
       if (parts.length === 4 && parts[3] === "messages" && request.method === "POST") {
         const envelope = await readJson(request);
-        if (!validEnvelope(envelope, roomId) || !participantIds(room).includes(envelope.senderId)) {
+        const participants = await readParticipants(db, roomId);
+        const sender = participants.find((member) => member.participantId === envelope?.senderId);
+        if (!validEnvelope(envelope, roomId) || !sender || envelope.v !== room.protocol_version ||
+            (room.protocol_version === 2 && envelope.publicKey !== sender.publicKey)) {
           throw new ClientError(400, "Invalid encrypted envelope or sender.");
         }
-        if (!room.peer_id) return json(409, { error: "The peer has not joined yet." });
-        const recipientId = envelope.senderId === room.owner_id ? room.peer_id : room.owner_id;
+        if (participants.length < 2) return json(409, { error: "No other participant has joined yet." });
         const now = Date.now();
         const expiresAt = now + messageTtlMs;
-        const inserted = await run(
+        const recipients = participants.filter((member) => member.participantId !== envelope.senderId);
+        const fullRecipient = await first(
           db,
+          `SELECT member.participant_id FROM codex_link_room_members AS member
+           WHERE member.room_id = ? AND member.participant_id != ?
+             AND (SELECT COUNT(*) FROM codex_link_messages AS queued
+                  WHERE queued.room_id = member.room_id AND queued.recipient_id = member.participant_id
+                    AND queued.expires_at > ?) >= ?
+             AND NOT EXISTS (SELECT 1 FROM codex_link_messages AS prior
+                             WHERE prior.room_id = member.room_id AND prior.recipient_id = member.participant_id
+                               AND prior.message_id = ?)
+           LIMIT 1`,
+          roomId,
+          envelope.senderId,
+          now,
+          maxPending,
+          envelope.messageId,
+        );
+        if (fullRecipient) return json(429, { error: "A participant queue is full; retry this message later." });
+        const results = await db.batch(recipients.map((recipient) => db.prepare(
           `INSERT OR IGNORE INTO codex_link_messages
            (room_id, recipient_id, sender_id, message_id, envelope_json, created_at, expires_at)
            SELECT ?, ?, ?, ?, ?, ?, ?
            WHERE (SELECT COUNT(*) FROM codex_link_messages
                   WHERE room_id = ? AND recipient_id = ? AND expires_at > ?) < ?`,
+        ).bind(
           roomId,
-          recipientId,
+          recipient.participantId,
           envelope.senderId,
           envelope.messageId,
           JSON.stringify(envelope),
           now,
           expiresAt,
           roomId,
-          recipientId,
+          recipient.participantId,
           now,
           maxPending,
-        );
-        if (changes(inserted) === 0) {
-          const duplicate = await first(
-            db,
-            "SELECT message_id FROM codex_link_messages WHERE room_id = ? AND recipient_id = ? AND message_id = ?",
-            roomId,
-            recipientId,
-            envelope.messageId,
-          );
-          if (!duplicate) return json(429, { error: "Recipient queue is full." });
+        )));
+        for (const [index, inserted] of results.entries()) {
+          if (changes(inserted) === 0) {
+            const duplicate = await first(
+              db,
+              "SELECT message_id FROM codex_link_messages WHERE room_id = ? AND recipient_id = ? AND message_id = ?",
+              roomId,
+              recipients[index].participantId,
+              envelope.messageId,
+            );
+            if (!duplicate) return json(429, { error: "A participant queue is full; retry this message later." });
+          }
         }
         return json(202, { accepted: true });
       }
 
       if (parts.length === 4 && parts[3] === "messages" && request.method === "GET") {
         const participantId = url.searchParams.get("participantId");
-        if (!participantIds(room).includes(participantId)) return json(403, { error: "Participant is not in this room." });
+        const participants = await readParticipants(db, roomId);
+        if (!participants.some((member) => member.participantId === participantId)) {
+          return json(403, { error: "Participant is not in this room." });
+        }
         const waitMs = Math.min(Math.max(Number(url.searchParams.get("waitMs") ?? 0) || 0, 0), MAX_WAIT_MS);
         const deadline = Date.now() + waitMs;
         let messages = await readPending(db, roomId, participantId, maxPending);
@@ -404,7 +503,8 @@ export function createSitesRelay({
 
       if (parts.length === 4 && parts[3] === "acks" && request.method === "POST") {
         const body = await readJson(request);
-        if (!participantIds(room).includes(body?.participantId)) {
+        const participants = await readParticipants(db, roomId);
+        if (!participants.some((member) => member.participantId === body?.participantId)) {
           return json(403, { error: "Participant is not in this room." });
         }
         const requestedIds = Array.isArray(body?.messageIds) ? body.messageIds : [];
@@ -424,10 +524,31 @@ export function createSitesRelay({
         return json(200, { acknowledged: changes(result) });
       }
 
+      if (parts.length === 4 && parts[3] === "leave" && request.method === "POST") {
+        const body = await readJson(request);
+        const participant = (await readParticipants(db, roomId))
+          .find((member) => member.participantId === body?.participantId);
+        if (!participant) return json(403, { error: "Participant is not in this room." });
+        if (participant.role === "owner") return json(409, { error: "The room owner must close the room instead of leaving it." });
+        await db.batch([
+          db.prepare("DELETE FROM codex_link_messages WHERE room_id = ? AND recipient_id = ?")
+            .bind(roomId, body.participantId),
+          db.prepare("DELETE FROM codex_link_room_members WHERE room_id = ? AND participant_id = ?")
+            .bind(roomId, body.participantId),
+          db.prepare("UPDATE codex_link_rooms SET peer_id = NULL WHERE room_id = ? AND peer_id = ?")
+            .bind(roomId, body.participantId),
+        ]);
+        return json(200, { left: true });
+      }
+
       if (parts.length === 3 && request.method === "DELETE") {
         const body = await readJson(request);
-        if (!participantIds(room).includes(body?.participantId)) {
+        const participants = await readParticipants(db, roomId);
+        if (!participants.some((member) => member.participantId === body?.participantId)) {
           return json(403, { error: "Participant is not in this room." });
+        }
+        if (room.protocol_version === 2 && body.participantId !== room.owner_id) {
+          return json(403, { error: "Only the room owner can close this group room. Other participants should leave." });
         }
         await run(db, "DELETE FROM codex_link_rooms WHERE room_id = ?", roomId);
         return json(200, { closed: true });

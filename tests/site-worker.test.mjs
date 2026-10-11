@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createInvitation, decryptMessage, encryptMessage, parseInvitation, randomId } from "../plugin/src/protocol.mjs";
+import { createIdentity, createInvitation, decryptMessage, encryptMessage, parseInvitation, randomId } from "../plugin/src/protocol.mjs";
 import { createSitesRelay } from "../site/worker/index.js";
 import { createD1TestDatabase, sqliteAvailable } from "./support/d1-test-db.mjs";
 
@@ -24,7 +24,7 @@ function request(worker, path, { db, method = "GET", body, token = ROOM_CAPABILI
 test("D1 relay stores ciphertext only, enforces room capabilities, ACKs and expires messages", { skip: !sqliteAvailable }, async () => {
   const db = await createD1TestDatabase();
   const worker = createSitesRelay({ roomTtlMs: 5_000, messageTtlMs: 25, cleanupIntervalMs: 0 });
-  const invitation = createInvitation();
+  const invitation = createInvitation({ version: 1 });
   const alice = randomId();
   const bob = randomId();
 
@@ -82,7 +82,7 @@ test("separate Worker instances share rooms and ciphertext through the D1 bindin
   const db = await createD1TestDatabase();
   const firstInstance = createSitesRelay({ cleanupIntervalMs: 0, waitPollMs: 5 });
   const secondInstance = createSitesRelay({ cleanupIntervalMs: 0, waitPollMs: 5 });
-  const invitation = createInvitation();
+  const invitation = createInvitation({ version: 1 });
   const peerInvitation = parseInvitation(invitation.code);
   const alice = randomId();
   const bob = randomId();
@@ -132,10 +132,78 @@ test("separate Worker instances share rooms and ciphertext through the D1 bindin
   }
 });
 
+test("v2 group rooms register self-certifying identities and fan out only ciphertext to every member", { skip: !sqliteAvailable }, async () => {
+  const db = await createD1TestDatabase();
+  const worker = createSitesRelay({ cleanupIntervalMs: 0 });
+  const invitation = createInvitation();
+  const identities = Array.from({ length: 9 }, () => createIdentity());
+  const [alice, bob, carol, ...overflowCandidates] = identities;
+
+  try {
+    const created = await request(worker, "/v1/rooms", {
+      db,
+      method: "POST",
+      body: { roomId: invitation.roomId, participantId: alice.participantId, protocolVersion: 2, publicKey: alice.publicKey },
+    });
+    assert.equal(created.status, 201);
+    for (const identity of [bob, carol, ...overflowCandidates.slice(0, 5)]) {
+      const joined = await request(worker, `/v1/rooms/${invitation.roomId}/join`, {
+        db,
+        method: "POST",
+        body: { participantId: identity.participantId, protocolVersion: 2, publicKey: identity.publicKey },
+      });
+      assert.equal(joined.status, 200);
+    }
+    const overCapacity = await request(worker, `/v1/rooms/${invitation.roomId}/join`, {
+      db,
+      method: "POST",
+      body: { participantId: overflowCandidates[5].participantId, protocolVersion: 2, publicKey: overflowCandidates[5].publicKey },
+    });
+    assert.equal(overCapacity.status, 409);
+
+    const plaintext = "contenido solo para los extremos";
+    const envelope = encryptMessage(invitation, alice.participantId, plaintext, alice);
+    const sent = await request(worker, `/v1/rooms/${invitation.roomId}/messages`, { db, method: "POST", body: envelope });
+    assert.equal(sent.status, 202, await sent.text());
+    assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_messages").get().count, 7);
+    const stored = JSON.stringify(db.sqlite.prepare("SELECT envelope_json FROM codex_link_messages").all());
+    assert.equal(stored.includes(plaintext), false);
+    assert.equal(stored.includes(invitation.secret), false);
+
+    for (const identity of identities.slice(1, 8)) {
+      const pending = await (await request(worker, `/v1/rooms/${invitation.roomId}/messages?participantId=${identity.participantId}`, { db })).json();
+      assert.equal(decryptMessage(invitation, pending.messages[0]), plaintext);
+    }
+
+    const spoofed = { ...envelope, senderId: bob.participantId };
+    assert.equal((await request(worker, `/v1/rooms/${invitation.roomId}/messages`, { db, method: "POST", body: spoofed })).status, 400);
+    const status = await (await request(worker, `/v1/rooms/${invitation.roomId}/status?participantId=${alice.participantId}`, { db })).json();
+    assert.equal(status.participantCount, 8);
+    assert.equal(status.maxParticipants, 8);
+
+    const unauthorizedClose = await request(worker, `/v1/rooms/${invitation.roomId}`, {
+      db,
+      method: "DELETE",
+      body: { participantId: bob.participantId },
+    });
+    assert.equal(unauthorizedClose.status, 403);
+    const left = await request(worker, `/v1/rooms/${invitation.roomId}/leave`, {
+      db,
+      method: "POST",
+      body: { participantId: carol.participantId },
+    });
+    assert.deepEqual(await left.json(), { left: true });
+    assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_room_members WHERE room_id = ?").get(invitation.roomId).count, 7);
+    assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_messages WHERE recipient_id = ?").get(carol.participantId).count, 0);
+  } finally {
+    db.close();
+  }
+});
+
 test("the D1 relay enforces a per-recipient queue limit and idempotent retries", { skip: !sqliteAvailable }, async () => {
   const db = await createD1TestDatabase();
   const worker = createSitesRelay({ maxPending: 1, cleanupIntervalMs: 0 });
-  const invitation = createInvitation();
+  const invitation = createInvitation({ version: 1 });
   const alice = randomId();
   const bob = randomId();
 

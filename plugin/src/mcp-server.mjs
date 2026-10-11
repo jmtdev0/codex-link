@@ -1,4 +1,4 @@
-import { randomId, createInvitation, parseInvitation, deriveRoomCapability, encryptMessage, decryptMessage } from "./protocol.mjs";
+import { randomId, createIdentity, createInvitation, parseInvitation, deriveRoomCapability, encryptMessage, decryptMessage, MAX_ROOM_PARTICIPANTS } from "./protocol.mjs";
 import { readFileSync } from "node:fs";
 import {
   acknowledgeEnvelopes,
@@ -6,6 +6,7 @@ import {
   createRoom,
   getRoomStatus,
   joinRoom,
+  leaveRoom,
   receiveEnvelopes,
   relayBaseUrl,
   sendEnvelope,
@@ -16,7 +17,7 @@ const MAX_SESSIONS = 8;
 const MAX_WAIT_MS = 15_000;
 const MAX_TRANSCRIPT_MESSAGES = 100;
 const RECEIPT_PREFIX = "[[codex-link-receipt:v1]]";
-const PANEL_URI = "ui://codex-link/conversation-panel-v0.3.0.html";
+const PANEL_URI = "ui://codex-link/conversation-panel-v0.4.0.html";
 const PANEL_HTML = readFileSync(new URL("../ui/conversation-panel.html", import.meta.url), "utf8");
 
 function appOnly() {
@@ -44,7 +45,7 @@ const tools = [
   },
   {
     name: "codex_link_create_invite",
-    description: "Create a one-time encrypted Codex Link room and return its invitation code for the user to share out of band.",
+    description: "Create an encrypted Codex Link room for up to eight participants and return its bearer invitation code for the user to share out of band.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -110,7 +111,7 @@ const tools = [
   },
   {
     name: "codex_link_status",
-    description: "Check whether the one-to-one room is open and how many participants have joined; reveals metadata only.",
+    description: "Check whether the room is open and how many participants have joined; reveals metadata only.",
     inputSchema: {
       type: "object",
       properties: { session_id: { type: "string", minLength: 22, maxLength: 22 } },
@@ -120,7 +121,7 @@ const tools = [
   },
   {
     name: "codex_link_disconnect",
-    description: "Close the shared room and erase this MCP process's in-memory room secret.",
+    description: "Leave the room, or close it for everyone if this process created it; erase this process's in-memory room secret.",
     inputSchema: {
       type: "object",
       properties: { session_id: { type: "string", minLength: 22, maxLength: 22 } },
@@ -129,8 +130,8 @@ const tools = [
     },
     outputSchema: {
       type: "object",
-      properties: { disconnected: { type: "boolean" }, relayClosed: { type: "boolean" } },
-      required: ["disconnected", "relayClosed"],
+      properties: { disconnected: { type: "boolean" }, relayClosed: { type: "boolean" }, relayLeft: { type: "boolean" } },
+      required: ["disconnected", "relayClosed", "relayLeft"],
       additionalProperties: false,
     },
   },
@@ -148,7 +149,7 @@ const tools = [
   },
   {
     name: "codex_link_panel_join_room",
-    description: "Join a room from the Codex Link panel using a one-time code supplied out of band. The code and decrypted transcript are not returned to the model.",
+    description: "Join a Codex Link room from the panel using a code supplied out of band. The code and decrypted transcript are not returned to the model.",
     inputSchema: {
       type: "object",
       properties: { invitation_code: { type: "string", minLength: 60, maxLength: 100 } },
@@ -226,7 +227,7 @@ const tools = [
   },
   {
     name: "codex_link_panel_disconnect",
-    description: "Close and forget a room from the Codex Link panel.",
+    description: "Leave a room or, for its owner, close it for everyone; then forget local room state.",
     inputSchema: {
       type: "object",
       properties: { session_id: { type: "string", minLength: 22, maxLength: 22 } },
@@ -235,8 +236,8 @@ const tools = [
     },
     outputSchema: {
       type: "object",
-      properties: { disconnected: { type: "boolean" }, relayClosed: { type: "boolean" } },
-      required: ["disconnected", "relayClosed"],
+      properties: { disconnected: { type: "boolean" }, relayClosed: { type: "boolean" }, relayLeft: { type: "boolean" } },
+      required: ["disconnected", "relayClosed", "relayLeft"],
       additionalProperties: false,
     },
     _meta: appOnly(),
@@ -278,14 +279,21 @@ function ensureSessionCapacity() {
 async function createLocalRoom(baseUrl) {
   ensureSessionCapacity();
   const invitation = createInvitation();
-  const participantId = randomId();
+  const identity = invitation.version === 2 ? createIdentity() : null;
+  const participantId = identity?.participantId ?? randomId();
   const roomCapability = deriveRoomCapability(invitation);
-  const created = await createRoom(baseUrl, invitation.roomId, participantId, roomCapability);
+  const created = await createRoom(baseUrl, invitation.roomId, participantId, roomCapability, {
+    protocolVersion: invitation.version,
+    ...(identity ? { publicKey: identity.publicKey } : {}),
+  });
   const sessionId = randomId();
   sessions.set(sessionId, {
     invitation,
     roomCapability,
     participantId,
+    identity,
+    isOwner: true,
+    participants: [{ participantId, role: "owner" }],
     seen: new Set(),
     transcript: [],
     expiresAt: Date.parse(created.expiresAt),
@@ -297,24 +305,35 @@ async function disconnectLocalRoom(baseUrl, sessionId) {
   const session = getSession(sessionId);
   sessions.delete(sessionId);
   try {
-    await closeRoom(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability);
-    return true;
+    if (session.isOwner) {
+      await closeRoom(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability);
+      return { relayClosed: true, relayLeft: false };
+    }
+    await leaveRoom(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability);
+    return { relayClosed: false, relayLeft: true };
   } catch {
-    return false;
+    return { relayClosed: false, relayLeft: false };
   }
 }
 
 async function joinLocalRoom(baseUrl, code) {
   ensureSessionCapacity();
   const invitation = parseInvitation(code);
-  const participantId = randomId();
+  const identity = invitation.version === 2 ? createIdentity() : null;
+  const participantId = identity?.participantId ?? randomId();
   const roomCapability = deriveRoomCapability(invitation);
-  const joined = await joinRoom(baseUrl, invitation.roomId, participantId, roomCapability);
+  const joined = await joinRoom(baseUrl, invitation.roomId, participantId, roomCapability, {
+    protocolVersion: invitation.version,
+    ...(identity ? { publicKey: identity.publicKey } : {}),
+  });
   const sessionId = randomId();
   sessions.set(sessionId, {
     invitation,
     roomCapability,
     participantId,
+    identity,
+    isOwner: false,
+    participants: normalizeParticipants(joined.participants, participantId),
     seen: new Set(),
     transcript: [],
     expiresAt: Date.parse(joined.expiresAt),
@@ -322,7 +341,20 @@ async function joinLocalRoom(baseUrl, code) {
   return { invitation, participantId, sessionId, expiresAt: joined.expiresAt };
 }
 
+function normalizeParticipants(values, selfId) {
+  if (!Array.isArray(values)) return [{ participantId: selfId, role: "member" }];
+  return values.map((value) => typeof value === "string"
+    ? { participantId: value, role: "member" }
+    : { participantId: value.participantId, role: value.role ?? "member" });
+}
+
 async function receiveForSession(baseUrl, session, waitMs) {
+  try {
+    const status = await getRoomStatus(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability);
+    session.participants = normalizeParticipants(status.participants, session.participantId);
+  } catch {
+    // A transient status failure should not discard pending encrypted messages.
+  }
   const response = await receiveEnvelopes(
     baseUrl,
     session.invitation.roomId,
@@ -343,9 +375,13 @@ async function receiveForSession(baseUrl, session, waitMs) {
       if (receiptMatch) {
         const sentMessage = session.transcript.find((message) =>
           message.direction === "outgoing" && message.messageId === receiptMatch[1]);
-        if (sentMessage && !sentMessage.acknowledgedAt) {
-          sentMessage.acknowledgedAt = new Date().toISOString();
-          deliveryReceiptCount += 1;
+        if (sentMessage) {
+          sentMessage.acknowledgedBy ??= [];
+          if (!sentMessage.acknowledgedBy.includes(envelope.senderId)) {
+            sentMessage.acknowledgedBy.push(envelope.senderId);
+            sentMessage.acknowledgedAt ??= new Date().toISOString();
+            deliveryReceiptCount += 1;
+          }
         }
         continue;
       }
@@ -359,7 +395,7 @@ async function receiveForSession(baseUrl, session, waitMs) {
       received.push(message);
       appendTranscript(session, message);
       try {
-        const receipt = encryptMessage(session.invitation, session.participantId, `${RECEIPT_PREFIX}${envelope.messageId}`);
+        const receipt = encryptMessage(session.invitation, session.participantId, `${RECEIPT_PREFIX}${envelope.messageId}`, session.identity);
         await sendEnvelope(baseUrl, receipt, session.roomCapability);
       } catch {
         acknowledgementFailures += 1;
@@ -386,7 +422,7 @@ async function callTool(name, args = {}) {
   if (name === "codex_link_open_panel") {
     return {
       content: [{ type: "text", text: "Codex Link conversation panel is ready. Room messages remain in local memory until this MCP process exits." }],
-      structuredContent: { ready: true, version: "0.3.0" },
+      structuredContent: { ready: true, version: "0.4.0" },
     };
   }
 
@@ -394,8 +430,8 @@ async function callTool(name, args = {}) {
     const { invitation, sessionId, expiresAt } = await createLocalRoom(baseUrl);
     return toolResult(
       `Room ready until ${expiresAt}. Local session: ${sessionId}.\n\n` +
-      `Invitation code (share out of band with the intended peer; never send through the relay):\n${invitation.code}\n\n` +
-      "The code is a bearer secret. Share it only with the intended peer through a separate trusted channel. The relay never receives it.",
+      `Invitation code (share out of band with the intended participants; never send through the relay):\n${invitation.code}\n\n` +
+      `This bearer code can admit participants until the room reaches ${MAX_ROOM_PARTICIPANTS} members or expires. Anyone who receives it can join, so share it only with the intended group.`,
     );
   }
 
@@ -407,7 +443,7 @@ async function callTool(name, args = {}) {
   if (name === "codex_link_panel_create_room") {
     const { invitation, sessionId, expiresAt } = await createLocalRoom(baseUrl);
     return appToolResult(
-      "Created one-time invitation. The code is available in this panel for out-of-band sharing.",
+      "Created a group-room invitation. Share the bearer code out of band with each intended participant.",
       { created: true },
       { invitationCode: invitation.code, sessionId, expiresAt },
     );
@@ -424,7 +460,7 @@ async function callTool(name, args = {}) {
 
   if (name === "codex_link_send") {
     const session = getSession(args.session_id);
-    const envelope = encryptMessage(session.invitation, session.participantId, args.message);
+    const envelope = encryptMessage(session.invitation, session.participantId, args.message, session.identity);
     await sendEnvelope(baseUrl, envelope, session.roomCapability);
     appendTranscript(session, {
       messageId: envelope.messageId,
@@ -432,6 +468,7 @@ async function callTool(name, args = {}) {
       direction: "outgoing",
       receivedAt: new Date().toISOString(),
       acknowledgedAt: null,
+      acknowledgedBy: [],
       text: args.message,
     });
     return toolResult(`Sent one encrypted message (${envelope.messageId}). Plaintext was not sent to the relay.`);
@@ -439,7 +476,7 @@ async function callTool(name, args = {}) {
 
   if (name === "codex_link_panel_send") {
     const session = getSession(args.session_id);
-    const envelope = encryptMessage(session.invitation, session.participantId, args.message);
+    const envelope = encryptMessage(session.invitation, session.participantId, args.message, session.identity);
     await sendEnvelope(baseUrl, envelope, session.roomCapability);
     appendTranscript(session, {
       messageId: envelope.messageId,
@@ -447,6 +484,7 @@ async function callTool(name, args = {}) {
       direction: "outgoing",
       receivedAt: new Date().toISOString(),
       acknowledgedAt: null,
+      acknowledgedBy: [],
       text: args.message,
     });
     return appToolResult("Encrypted message sent.", { sent: true });
@@ -492,6 +530,10 @@ async function callTool(name, args = {}) {
         sessionId,
         roomId: session.invitation.roomId,
         participantId: session.participantId,
+        protocolVersion: session.invitation.version,
+        maxParticipants: session.invitation.version === 2 ? MAX_ROOM_PARTICIPANTS : 2,
+        participants: session.participants,
+        isOwner: session.isOwner,
         expiresAt: new Date(session.expiresAt).toISOString(),
       });
     }
@@ -510,25 +552,31 @@ async function callTool(name, args = {}) {
   }
 
   if (name === "codex_link_panel_disconnect") {
-    const relayClosed = await disconnectLocalRoom(baseUrl, args.session_id);
-    const message = relayClosed
-      ? "Room closed and its local secret and transcript were forgotten."
-      : "The local secret and transcript were forgotten, but the relay could not confirm closure; the room may remain until it expires.";
-    return appToolResult(message, { disconnected: true, relayClosed });
+    const result = await disconnectLocalRoom(baseUrl, args.session_id);
+    const message = result.relayClosed
+      ? "Room closed for everyone; the local secret and transcript were forgotten."
+      : result.relayLeft
+        ? "You left the room; your local secret and transcript were forgotten."
+        : "Your local secret and transcript were forgotten, but the relay could not confirm the room action.";
+    return appToolResult(message, { disconnected: true, ...result });
   }
 
   if (name === "codex_link_status") {
     const session = getSession(args.session_id);
     const status = await getRoomStatus(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability);
-    return toolResult(`Room is open. Participants joined: ${status.participantCount}/2. Expires ${status.expiresAt}.`);
+    session.participants = normalizeParticipants(status.participants, session.participantId);
+    const maxParticipants = status.maxParticipants ?? (session.invitation.version === 2 ? MAX_ROOM_PARTICIPANTS : 2);
+    return toolResult(`Room is open. Participants joined: ${status.participantCount}/${maxParticipants}. Expires ${status.expiresAt}.`);
   }
 
   if (name === "codex_link_disconnect") {
-    const relayClosed = await disconnectLocalRoom(baseUrl, args.session_id);
-    const message = relayClosed
-      ? "Room closed and this process forgot the local secret."
-      : "The local secret and transcript were forgotten, but the relay could not confirm closure; the room may remain until it expires.";
-    return { ...toolResult(message), structuredContent: { disconnected: true, relayClosed } };
+    const result = await disconnectLocalRoom(baseUrl, args.session_id);
+    const message = result.relayClosed
+      ? "Room closed for everyone and this process forgot the local secret."
+      : result.relayLeft
+        ? "You left the room and this process forgot the local secret."
+        : "The local secret was forgotten, but the relay could not confirm the room action.";
+    return { ...toolResult(message), structuredContent: { disconnected: true, ...result } };
   }
 
   throw new Error(`Unknown tool: ${name}`);
@@ -550,7 +598,7 @@ async function handleRequest(message) {
       result: {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {}, resources: {} },
-        serverInfo: { name: "codex-link", version: "0.3.0" },
+        serverInfo: { name: "codex-link", version: "0.4.0" },
         instructions: "Encrypt all text locally. Never send invitation codes or plaintext to the relay.",
       },
     });

@@ -129,7 +129,7 @@ test("packaged MCP clients exchange encrypted messages through the Site Worker a
 
   const createdText = readToolText(await callTool(alice, "codex_link_create_invite"));
   const sessionA = createdText.match(/Local session: ([A-Za-z0-9_-]{22})/)[1];
-  const invitationCode = createdText.match(/\b(cl1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43})\b/)[1];
+  const invitationCode = createdText.match(/\b(cl2\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43})\b/)[1];
   const invitationSecret = invitationCode.split(".")[2];
   const joinedText = readToolText(await callTool(bob, "codex_link_join", { invitation_code: invitationCode }));
   const sessionB = joinedText.match(/Local session: ([A-Za-z0-9_-]{22})/)[1];

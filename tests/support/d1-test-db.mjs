@@ -16,6 +16,7 @@ export async function createD1TestDatabase() {
   const migrations = await Promise.all([
     readFile(new URL("../../site/drizzle/0001_codex_link_relay.sql", import.meta.url), "utf8"),
     readFile(new URL("../../site/drizzle/0002_room_capabilities_and_rate_limits.sql", import.meta.url), "utf8"),
+    readFile(new URL("../../site/drizzle/0003_group_rooms.sql", import.meta.url), "utf8"),
   ]);
   for (const migration of migrations) sqlite.exec(migration);
 

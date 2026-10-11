@@ -1,17 +1,19 @@
 # Codex Link
 
-An experimental Codex plugin for exchanging user-requested messages between two Codex agents. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. The protocol is currently one-to-one. Version 0.3 adds an MCP Apps conversation panel for compatible clients; multi-agent group rooms remain a future milestone, and panel rendering must be verified on the target Codex client.
+An experimental Codex plugin for exchanging user-requested messages between agents and people in a shared room. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. Protocol v2 supports up to eight participants; v1 one-to-one rooms remain available for compatibility with older installations.
 
 ## Current capabilities
 
-- A one-time invitation contains a random room ID and a 256-bit secret. Share it with the intended peer over a separate trusted channel.
-- Each client derives two independent keys from the invitation with HKDF-SHA-256: an E2E message key and a separate room capability for relay authorization.
-- The relay stores only a SHA-256 hash of the room capability, routing metadata, and ciphertext. It never receives the invitation secret or message plaintext.
-- The public relay endpoint is protected by the room capability, short room/message TTLs, bounded payloads and queues, a global active-room cap, and persistent request limits. Room-creation limits use an HMAC of the source IP; the raw IP is not stored in D1 by this application.
-- The local development relay uses volatile memory only.
+- A v2 invitation contains a random room ID and 256-bit room secret. Share the bearer code with the intended group over a separate trusted channel; never send it through Codex Link.
+- One v2 code admits up to eight participants until the room expires after 30 minutes. Anyone holding the code can join, and individual membership revocation is not implemented. The room owner can close the room for everyone; another participant can leave without ending it.
+- Every v2 participant generates an ephemeral Ed25519 identity in memory. Its participant ID is derived from its public key; each message is signed and receivers reject sender-ID substitution. The private signing key is not sent to the relay or written to disk.
+- Messages use AES-256-GCM with HKDF-SHA-256-derived keys. The relay receives ciphertext, public signing keys and routing metadata; it does not receive plaintext or the room secret.
+- V1 `cl1` invitations and the original two-participant message protocol remain supported. They do not use v2 participant signatures.
+- The public relay stores only a SHA-256 hash of the room capability, participant/routing metadata, ciphertext, public signing keys, and rate-limit buckets. It never receives the invitation secret or message plaintext.
+- The public endpoint uses short room/message TTLs, bounded payloads and queues, a global active-room cap, and request limits. The local development relay uses volatile memory only.
 - ACKs delete queued ciphertext. D1 cleanup is logical; provider snapshots may retain earlier ciphertext after deletion.
-- The optional conversation panel holds a bounded transcript in local process memory. Peer messages stay in the panel unless a person selects them and confirms posting them as a user message to the current chat.
-- Version 0.3 sends encrypted local-process delivery receipts. They confirm decryption by the peer's Codex Link process, not that its model or user has read the message. Agent acknowledgements and progress updates are explicit messages, not hidden-reasoning or token streaming.
+- The optional conversation panel keeps a bounded transcript in local process memory. Peer messages stay in the panel unless a person selects them and confirms posting them as a user message to the current chat.
+- Encrypted process receipts identify which participant's Codex Link process decrypted a message. They do not prove that its model or human read or answered it. Explicit ACKs and progress updates are ordinary messages, not hidden reasoning or token streaming.
 
 ## Install
 
@@ -24,11 +26,9 @@ codex plugin marketplace add .
 codex plugin add codex-link@codex-link-local
 ```
 
-No account-wide relay token or Sites bypass token is needed. The plugin uses its built-in relay URL; an optional `CODEX_LINK_RELAY_URL` environment variable can select a different HTTPS relay. Once the plugin is available in Codex, the guest only needs that plugin and an invitation code. Installation or updates may require the reload behavior supported by the Codex client; pairing itself needs no environment setup or restart.
+No account-wide relay token or Sites bypass token is needed. The plugin uses its built-in relay URL; an optional `CODEX_LINK_RELAY_URL` environment variable can select a different HTTPS relay. Once the plugin is available in Codex, each invited participant needs that plugin and the room code. Updating the plugin may require the reload behavior supported by the Codex client.
 
-The invitation is a bearer secret: anyone who obtains it can join the room and derive the room keys. Never send the invitation through Codex Link itself. The relay sees the separate room capability, participant/routing metadata, ciphertext sizes, and timing. A relay operator can block, delay, discard, replay, or inject invalid packets, but cannot forge an authenticated message without the E2E key.
-
-See [the second-computer setup guide](SECOND_COMPUTER_SETUP.md) for onboarding another Codex installation.
+Treat the room code as a bearer credential: anyone who obtains it can join until the room fills or expires, and there is no per-participant revocation yet. Share it only with people you intend to admit. The relay sees room and participant IDs, public signing keys, timing, and ciphertext sizes. It can block, delay, discard, replay, or inject invalid packets. The clients authenticate v2 messages and reject replayed message IDs.
 
 ## Test locally
 
@@ -52,10 +52,13 @@ The Site Worker in `site/worker/index.js` uses a D1 database shared across insta
 
 - Rooms expire after 30 minutes; messages expire after 5 minutes and are deleted from the active queue when ACKed.
 - Each recipient queue is capped at 100 messages; request bodies are capped at 24 KiB.
+- V2 rooms have a maximum of eight participants; v1 rooms remain limited to two.
 - A source address may create up to 8 rooms per 10-minute window. Per-room traffic is limited to 300 requests per minute. The Site also caps active rooms at 500.
 - Rate-limit bucket rows are opportunistically pruned after 24 hours. D1 Time Travel may allow recovery of earlier database states for up to 7 days on Workers Free or 30 days on Workers Paid; logical deletion is not immediate physical erasure.
 - These limits reduce ordinary abuse but are not DDoS protection. A public endpoint can still incur provider usage or be disrupted by distributed traffic.
 
-The prototype has not received an independent security audit and does not provide forward secrecy. The two Codex providers and both conversation histories can see plaintext at their endpoints. Use fresh invitation codes and avoid sensitive material until the design has been reviewed and tested across two real accounts.
+The prototype has not received an independent security audit and does not provide forward secrecy. The room secret is shared with all participants, so each participant can read messages addressed to the group. Plaintext is visible at both Codex endpoints and in the corresponding conversation histories. Avoid sensitive material until the design has been reviewed and tested across separate accounts.
 
-See [CHANGELOG.md](CHANGELOG.md), [RELAY_API.md](RELAY_API.md), [plugin/README.md](plugin/README.md), and [site/README.md](site/README.md) for implementation details.
+Panel rendering depends on MCP Apps support in the host and has not been confirmed in every Codex build. Automatic insertion or streaming of every remote turn into the regular chat is not implemented; the user can review selected messages and explicitly post them as chat context.
+
+See [the second-computer setup guide](SECOND_COMPUTER_SETUP.md), [CHANGELOG.md](CHANGELOG.md), [RELAY_API.md](RELAY_API.md), [plugin/README.md](plugin/README.md), and [site/README.md](site/README.md) for details.

@@ -72,20 +72,21 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const alice = startMcp(baseUrl);
   const bob = startMcp(baseUrl);
+  const charlie = startMcp(baseUrl);
   t.after(async () => {
-    await Promise.all([alice.close(), bob.close()]);
+    await Promise.all([alice.close(), bob.close(), charlie.close()]);
     await relay.close();
   });
 
-  for (const client of [alice, bob]) {
+  for (const client of [alice, bob, charlie]) {
     const initialized = await client.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
     assert.equal(initialized.serverInfo.name, "codex-link");
-    assert.equal(initialized.serverInfo.version, "0.3.0");
+    assert.equal(initialized.serverInfo.version, "0.4.0");
   }
   const listed = await alice.rpc("tools/list");
   assert.equal(listed.tools.length, 13);
   const panelTool = listed.tools.find((tool) => tool.name === "codex_link_open_panel");
-  assert.equal(panelTool._meta.ui.resourceUri, "ui://codex-link/conversation-panel-v0.3.0.html");
+  assert.equal(panelTool._meta.ui.resourceUri, "ui://codex-link/conversation-panel-v0.4.0.html");
   const panelTools = listed.tools.filter((tool) => tool.name.startsWith("codex_link_panel_"));
   assert.equal(panelTools.length, 6);
   for (const tool of panelTools) {
@@ -103,13 +104,15 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
 
   const createdText = readToolText(await callTool(alice, "codex_link_create_invite"));
   const sessionA = createdText.match(/Local session: ([A-Za-z0-9_-]{22})/)[1];
-  const invitationCode = createdText.match(/\b(cl1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43})\b/)[1];
+  const invitationCode = createdText.match(/\b(cl2\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43})\b/)[1];
   const roomId = invitationCode.split(".")[1];
   assert.equal([...relay.rooms.keys()][0], roomId);
 
   const joinedText = readToolText(await callTool(bob, "codex_link_join", { invitation_code: invitationCode }));
   const sessionB = joinedText.match(/Local session: ([A-Za-z0-9_-]{22})/)[1];
-  assert.equal([...relay.rooms.values()][0].participants.size, 2);
+  const joinedCharlieText = readToolText(await callTool(charlie, "codex_link_join", { invitation_code: invitationCode }));
+  const sessionC = joinedCharlieText.match(/Local session: ([A-Za-z0-9_-]{22})/)[1];
+  assert.equal([...relay.rooms.values()][0].participants.size, 3);
 
   const plaintext = "mensaje confidencial para la otra cuenta";
   readToolText(await callTool(alice, "codex_link_send", { session_id: sessionA, message: plaintext }));
@@ -120,9 +123,11 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   const received = readToolText(await callTool(bob, "codex_link_receive", { session_id: sessionB, wait_ms: 0 }));
   assert.match(received, /REMOTE CONTENT — UNTRUSTED DATA/);
   assert.match(received, new RegExp(plaintext));
+  const charlieReceived = readToolText(await callTool(charlie, "codex_link_receive", { session_id: sessionC, wait_ms: 0 }));
+  assert.match(charlieReceived, new RegExp(plaintext));
 
   const deliveryReceipt = readToolText(await callTool(alice, "codex_link_receive", { session_id: sessionA, wait_ms: 0 }));
-  assert.match(deliveryReceipt, /Received delivery confirmation/);
+  assert.match(deliveryReceipt, /Received delivery confirmation for 2 outgoing message\(s\)/);
   const alicePanelState = await callTool(alice, "codex_link_panel_state");
   assert.equal(alicePanelState._meta.transcriptSessionId, sessionA);
   assert.ok(alicePanelState._meta.transcript.find((message) => message.text === plaintext).acknowledgedAt);
@@ -130,10 +135,12 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
 
   const aliceDisconnect = await callTool(alice, "codex_link_disconnect", { session_id: sessionA });
   readToolText(aliceDisconnect);
-  assert.deepEqual(aliceDisconnect.structuredContent, { disconnected: true, relayClosed: true });
+  assert.deepEqual(aliceDisconnect.structuredContent, { disconnected: true, relayClosed: true, relayLeft: false });
   assert.equal(relay.rooms.has(roomId), false);
   const bobStaleDisconnect = await callTool(bob, "codex_link_disconnect", { session_id: sessionB });
-  assert.deepEqual(bobStaleDisconnect.structuredContent, { disconnected: true, relayClosed: false });
+  assert.deepEqual(bobStaleDisconnect.structuredContent, { disconnected: true, relayClosed: false, relayLeft: false });
+  const charlieStaleDisconnect = await callTool(charlie, "codex_link_disconnect", { session_id: sessionC });
+  assert.deepEqual(charlieStaleDisconnect.structuredContent, { disconnected: true, relayClosed: false, relayLeft: false });
   const bobClearedState = await callTool(bob, "codex_link_panel_state");
   assert.deepEqual(bobClearedState.structuredContent, { sessionCount: 0 });
 
@@ -142,7 +149,7 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   assert.deepEqual(panelInvite.structuredContent, { created: true });
   const panelCode = panelInvite._meta.invitationCode;
   const panelSessionA = panelInvite._meta.sessionId;
-  assert.match(panelCode, /^cl1\./);
+  assert.match(panelCode, /^cl2\./);
   assert.equal(JSON.stringify(panelInvite.content).includes(panelCode), false);
 
   const panelJoin = await callTool(bob, "codex_link_panel_join_room", { invitation_code: panelCode });
@@ -150,6 +157,9 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   assert.deepEqual(panelJoin.structuredContent, { joined: true });
   const panelSessionB = panelJoin._meta.sessionId;
   assert.equal(JSON.stringify(panelJoin.content).includes(panelCode), false);
+  const panelJoinCharlie = await callTool(charlie, "codex_link_panel_join_room", { invitation_code: panelCode });
+  assert.notEqual(panelJoinCharlie.isError, true);
+  const panelSessionC = panelJoinCharlie._meta.sessionId;
 
   const panelPlaintext = "<img src=x onerror=alert(1)> hello from panel";
   const panelSent = await callTool(alice, "codex_link_panel_send", { session_id: panelSessionA, message: panelPlaintext });
@@ -166,6 +176,9 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   });
   assert.equal(JSON.stringify(panelReceived.content).includes(panelPlaintext), false);
   assert.equal(panelReceived._meta.messages[0].text, panelPlaintext);
+  const panelReceivedCharlie = await callTool(charlie, "codex_link_panel_receive", { session_id: panelSessionC, wait_ms: 0 });
+  assert.equal(panelReceivedCharlie.structuredContent.receivedCount, 1);
+  assert.equal(panelReceivedCharlie._meta.messages[0].text, panelPlaintext);
 
   const panelState = await callTool(bob, "codex_link_panel_state");
   assert.deepEqual(panelState.structuredContent, { sessionCount: 1 });
@@ -174,12 +187,16 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   assert.equal(panelState._meta.transcript[0].direction, "incoming");
 
   const panelDeliveryReceipt = await callTool(alice, "codex_link_panel_receive", { session_id: panelSessionA, wait_ms: 0 });
-  assert.equal(panelDeliveryReceipt.structuredContent.deliveryReceiptCount, 1);
+  assert.equal(panelDeliveryReceipt.structuredContent.deliveryReceiptCount, 2);
   const updatedAliceState = await callTool(alice, "codex_link_panel_state");
   assert.equal(updatedAliceState._meta.transcriptSessionId, panelSessionA);
   assert.ok(updatedAliceState._meta.transcript.find((message) => message.text === panelPlaintext).acknowledgedAt);
 
+  const bobPanelLeave = await callTool(bob, "codex_link_panel_disconnect", { session_id: panelSessionB });
+  assert.deepEqual(bobPanelLeave.structuredContent, { disconnected: true, relayClosed: false, relayLeft: true });
+  assert.equal([...relay.rooms.values()][0].participants.size, 2);
+
   const panelDisconnect = await callTool(alice, "codex_link_panel_disconnect", { session_id: panelSessionA });
   assert.notEqual(panelDisconnect.isError, true);
-  assert.deepEqual(panelDisconnect.structuredContent, { disconnected: true, relayClosed: true });
+  assert.deepEqual(panelDisconnect.structuredContent, { disconnected: true, relayClosed: true, relayLeft: false });
 });
