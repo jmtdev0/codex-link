@@ -7,12 +7,19 @@
       "env_vars": ["CODEX_LINK_RELAY_URL"],
       "default_tools_approval_mode": "prompt",
       "tools": {
+        "codex_link_open_panel": { "approval_mode": "auto" },
         "codex_link_create_invite": { "approval_mode": "prompt" },
         "codex_link_join": { "approval_mode": "prompt" },
         "codex_link_send": { "approval_mode": "prompt" },
         "codex_link_receive": { "approval_mode": "prompt" },
         "codex_link_status": { "approval_mode": "prompt" },
-        "codex_link_disconnect": { "approval_mode": "prompt" }
+        "codex_link_disconnect": { "approval_mode": "prompt" },
+        "codex_link_panel_create_room": { "approval_mode": "auto" },
+        "codex_link_panel_join_room": { "approval_mode": "auto" },
+        "codex_link_panel_send": { "approval_mode": "auto" },
+        "codex_link_panel_receive": { "approval_mode": "auto" },
+        "codex_link_panel_state": { "approval_mode": "auto" },
+        "codex_link_panel_disconnect": { "approval_mode": "auto" }
       }
     }
   }

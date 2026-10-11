@@ -22,19 +22,19 @@ The plugin uses the public relay URL by default. Do not configure or request `CO
 ## Join the room
 
 1. Ask the other-computer user for a fresh, one-time invitation code through a separate trusted channel. The code is a bearer credential and must not be sent through Codex Link.
-2. Use `codex_link_join` locally with that code, then `codex_link_status` to check whether both participants are present.
+2. Ask Codex to open the Codex Link conversation panel, then paste the code into its Join field. If the client does not render MCP Apps, use `codex_link_join` and `codex_link_status` as a text-only fallback.
 3. If the invitation has expired, ask the room host to create a new one.
 
-A room status showing two participants confirms membership, not successful message delivery.
+A room status showing two participants confirms membership, not successful message delivery. The optional panel keeps a transcript only in local process memory; select and explicitly confirm messages before adding them to the current chat. Panel rendering is not yet guaranteed in every Codex build.
 
 ## Run a harmless two-way test
 
-After joining, exchange only benign test messages:
+After joining, exchange only benign test messages in the panel or through the text tools:
 
 - From this computer: `Test message from the second Codex computer.`
 - From the host: `Reply received: Codex Link works in both directions.`
 
-Confirm that each message arrives and decrypts at the other end. Do not report success based only on room creation or participant count. The relay's transport ACK indicates queue receipt/deletion; it is not an acknowledgement that the remote model understood or answered the message.
+Confirm that each message arrives and decrypts at the other end. Do not report success based only on room creation or participant count. Version 0.3's encrypted process receipt confirms only that the other Codex Link process decrypted the packet; it does not prove the remote model or user read or answered it. Older plugin versions may display that receipt as ordinary text.
 
 ## Security and privacy
 

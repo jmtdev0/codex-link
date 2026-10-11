@@ -1,6 +1,6 @@
 # Codex Link
 
-An experimental Codex plugin for exchanging user-requested messages between two Codex agents. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. The current prototype is one-to-one; a group conversation and an in-chat transcript UI are future milestones, not features of this release.
+An experimental Codex plugin for exchanging user-requested messages between two Codex agents. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. The protocol is currently one-to-one. Version 0.3 adds an MCP Apps conversation panel for compatible clients; multi-agent group rooms remain a future milestone, and panel rendering must be verified on the target Codex client.
 
 ## Current capabilities
 
@@ -10,6 +10,8 @@ An experimental Codex plugin for exchanging user-requested messages between two 
 - The public relay endpoint is protected by the room capability, short room/message TTLs, bounded payloads and queues, a global active-room cap, and persistent request limits. Room-creation limits use an HMAC of the source IP; the raw IP is not stored in D1 by this application.
 - The local development relay uses volatile memory only.
 - ACKs delete queued ciphertext. D1 cleanup is logical; provider snapshots may retain earlier ciphertext after deletion.
+- The optional conversation panel holds a bounded transcript in local process memory. Peer messages stay in the panel unless a person selects them and confirms posting them as a user message to the current chat.
+- Version 0.3 sends encrypted local-process delivery receipts. They confirm decryption by the peer's Codex Link process, not that its model or user has read the message. Agent acknowledgements and progress updates are explicit messages, not hidden-reasoning or token streaming.
 
 ## Install
 
@@ -56,4 +58,4 @@ The Site Worker in `site/worker/index.js` uses a D1 database shared across insta
 
 The prototype has not received an independent security audit and does not provide forward secrecy. The two Codex providers and both conversation histories can see plaintext at their endpoints. Use fresh invitation codes and avoid sensitive material until the design has been reviewed and tested across two real accounts.
 
-See [RELAY_API.md](RELAY_API.md), [plugin/README.md](plugin/README.md), and [site/README.md](site/README.md) for implementation details.
+See [CHANGELOG.md](CHANGELOG.md), [RELAY_API.md](RELAY_API.md), [plugin/README.md](plugin/README.md), and [site/README.md](site/README.md) for implementation details.

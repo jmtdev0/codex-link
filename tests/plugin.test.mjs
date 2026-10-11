@@ -58,7 +58,7 @@ function startMcp(baseUrl) {
 }
 
 function readToolText(result) {
-  assert.equal(result.isError, false, result.content?.[0]?.text ?? "MCP tool failed");
+  assert.notEqual(result.isError, true, result.content?.[0]?.text ?? "MCP tool failed");
   return result.content?.[0]?.text ?? "";
 }
 
@@ -80,9 +80,26 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   for (const client of [alice, bob]) {
     const initialized = await client.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
     assert.equal(initialized.serverInfo.name, "codex-link");
+    assert.equal(initialized.serverInfo.version, "0.3.0");
   }
   const listed = await alice.rpc("tools/list");
-  assert.equal(listed.tools.length, 6);
+  assert.equal(listed.tools.length, 13);
+  const panelTool = listed.tools.find((tool) => tool.name === "codex_link_open_panel");
+  assert.equal(panelTool._meta.ui.resourceUri, "ui://codex-link/conversation-panel-v0.3.0.html");
+  const panelTools = listed.tools.filter((tool) => tool.name.startsWith("codex_link_panel_"));
+  assert.equal(panelTools.length, 6);
+  for (const tool of panelTools) {
+    assert.deepEqual(tool._meta.ui.visibility, ["app"]);
+    assert.ok(tool.outputSchema, `${tool.name} should declare its structured output`);
+  }
+  assert.ok(listed.tools.find((tool) => tool.name === "codex_link_receive").outputSchema);
+  const resources = await alice.rpc("resources/list");
+  assert.equal(resources.resources[0].uri, panelTool._meta.ui.resourceUri);
+  const panelResource = await alice.rpc("resources/read", { uri: panelTool._meta.ui.resourceUri });
+  assert.equal(panelResource.contents[0].mimeType, "text/html;profile=mcp-app");
+  assert.match(panelResource.contents[0].text, /Confirm and post to chat/);
+  assert.match(panelResource.contents[0].text, /body\.textContent = String\(message\.text/);
+  assert.doesNotMatch(panelResource.contents[0].text, /body\.innerHTML\s*=/);
 
   const createdText = readToolText(await callTool(alice, "codex_link_create_invite"));
   const sessionA = createdText.match(/Local session: ([A-Za-z0-9_-]{22})/)[1];
@@ -104,6 +121,65 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   assert.match(received, /REMOTE CONTENT — UNTRUSTED DATA/);
   assert.match(received, new RegExp(plaintext));
 
-  readToolText(await callTool(alice, "codex_link_disconnect", { session_id: sessionA }));
+  const deliveryReceipt = readToolText(await callTool(alice, "codex_link_receive", { session_id: sessionA, wait_ms: 0 }));
+  assert.match(deliveryReceipt, /Received delivery confirmation/);
+  const alicePanelState = await callTool(alice, "codex_link_panel_state");
+  assert.equal(alicePanelState._meta.transcriptSessionId, sessionA);
+  assert.ok(alicePanelState._meta.transcript.find((message) => message.text === plaintext).acknowledgedAt);
+  assert.equal(JSON.stringify([...relay.rooms.entries()]).includes(plaintext), false);
+
+  const aliceDisconnect = await callTool(alice, "codex_link_disconnect", { session_id: sessionA });
+  readToolText(aliceDisconnect);
+  assert.deepEqual(aliceDisconnect.structuredContent, { disconnected: true, relayClosed: true });
   assert.equal(relay.rooms.has(roomId), false);
+  const bobStaleDisconnect = await callTool(bob, "codex_link_disconnect", { session_id: sessionB });
+  assert.deepEqual(bobStaleDisconnect.structuredContent, { disconnected: true, relayClosed: false });
+  const bobClearedState = await callTool(bob, "codex_link_panel_state");
+  assert.deepEqual(bobClearedState.structuredContent, { sessionCount: 0 });
+
+  const panelInvite = await callTool(alice, "codex_link_panel_create_room");
+  assert.notEqual(panelInvite.isError, true);
+  assert.deepEqual(panelInvite.structuredContent, { created: true });
+  const panelCode = panelInvite._meta.invitationCode;
+  const panelSessionA = panelInvite._meta.sessionId;
+  assert.match(panelCode, /^cl1\./);
+  assert.equal(JSON.stringify(panelInvite.content).includes(panelCode), false);
+
+  const panelJoin = await callTool(bob, "codex_link_panel_join_room", { invitation_code: panelCode });
+  assert.notEqual(panelJoin.isError, true);
+  assert.deepEqual(panelJoin.structuredContent, { joined: true });
+  const panelSessionB = panelJoin._meta.sessionId;
+  assert.equal(JSON.stringify(panelJoin.content).includes(panelCode), false);
+
+  const panelPlaintext = "<img src=x onerror=alert(1)> hello from panel";
+  const panelSent = await callTool(alice, "codex_link_panel_send", { session_id: panelSessionA, message: panelPlaintext });
+  assert.notEqual(panelSent.isError, true);
+  assert.deepEqual(panelSent.structuredContent, { sent: true });
+  assert.equal(JSON.stringify(panelSent).includes(panelPlaintext), false);
+  const panelReceived = await callTool(bob, "codex_link_panel_receive", { session_id: panelSessionB, wait_ms: 0 });
+  assert.notEqual(panelReceived.isError, true);
+  assert.deepEqual(panelReceived.structuredContent, {
+    receivedCount: 1,
+    deliveryReceiptCount: 0,
+    rejectedCount: 0,
+    acknowledgementFailures: 0,
+  });
+  assert.equal(JSON.stringify(panelReceived.content).includes(panelPlaintext), false);
+  assert.equal(panelReceived._meta.messages[0].text, panelPlaintext);
+
+  const panelState = await callTool(bob, "codex_link_panel_state");
+  assert.deepEqual(panelState.structuredContent, { sessionCount: 1 });
+  assert.equal(panelState._meta.transcriptSessionId, panelSessionB);
+  assert.equal(panelState._meta.transcript[0].text, panelPlaintext);
+  assert.equal(panelState._meta.transcript[0].direction, "incoming");
+
+  const panelDeliveryReceipt = await callTool(alice, "codex_link_panel_receive", { session_id: panelSessionA, wait_ms: 0 });
+  assert.equal(panelDeliveryReceipt.structuredContent.deliveryReceiptCount, 1);
+  const updatedAliceState = await callTool(alice, "codex_link_panel_state");
+  assert.equal(updatedAliceState._meta.transcriptSessionId, panelSessionA);
+  assert.ok(updatedAliceState._meta.transcript.find((message) => message.text === panelPlaintext).acknowledgedAt);
+
+  const panelDisconnect = await callTool(alice, "codex_link_panel_disconnect", { session_id: panelSessionA });
+  assert.notEqual(panelDisconnect.isError, true);
+  assert.deepEqual(panelDisconnect.structuredContent, { disconnected: true, relayClosed: true });
 });

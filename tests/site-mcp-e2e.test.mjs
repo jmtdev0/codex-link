@@ -143,12 +143,21 @@ test("packaged MCP clients exchange encrypted messages through the Site Worker a
   const received = readToolText(await callTool(bob, "codex_link_receive", { session_id: sessionB, wait_ms: 0 }));
   assert.match(received, /REMOTE CONTENT — UNTRUSTED DATA/);
   assert.match(received, new RegExp(plaintext));
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_messages").get().count, 1);
+  const queuedReceipt = JSON.stringify(db.sqlite.prepare("SELECT envelope_json FROM codex_link_messages").all());
+  assert.equal(queuedReceipt.includes("[[codex-link-receipt:v1]]"), false);
+
+  const firstReceipt = await callTool(alice, "codex_link_receive", { session_id: sessionA, wait_ms: 0 });
+  assert.equal(firstReceipt.structuredContent.deliveryReceiptCount, 1);
   assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_messages").get().count, 0);
 
   const reply = "respuesta de vuelta por la otra instancia MCP";
   readToolText(await callTool(bob, "codex_link_send", { session_id: sessionB, message: reply }));
   const response = readToolText(await callTool(alice, "codex_link_receive", { session_id: sessionA, wait_ms: 0 }));
   assert.match(response, new RegExp(reply));
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_messages").get().count, 1);
+  const replyReceipt = await callTool(bob, "codex_link_receive", { session_id: sessionB, wait_ms: 0 });
+  assert.equal(replyReceipt.structuredContent.deliveryReceiptCount, 1);
   assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_messages").get().count, 0);
 
   readToolText(await callTool(alice, "codex_link_disconnect", { session_id: sessionA }));
