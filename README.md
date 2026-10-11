@@ -1,59 +1,59 @@
 # Codex Link
 
-Plugin experimental de Codex para comunicar dos agentes mediante una sala temporal. La parte local cifra y autentica cada mensaje con AES-256-GCM antes de enviarlo; el relé de desarrollo solo acepta sobres cifrados. El repositorio no incluye un Site provisionado, IDs de proyecto ni secretos: cada despliegue necesita su propia configuración privada.
+Experimental Codex plugin for connecting two agents through a temporary room. The local side encrypts and authenticates each message with AES-256-GCM before sending it; the development relay accepts encrypted envelopes only. The repository does not include a provisioned Site, project IDs, or secrets: each deployment requires its own private configuration.
 
-## Estado
+## Status
 
-- Plugin Codex local con servidor MCP por `stdio` y un skill de uso seguro.
-- Invitación aleatoria de 256 bits por sala; el secreto no forma parte de las peticiones al relé.
-- Clave por emisor derivada con HKDF-SHA-256; nonce aleatorio por mensaje; rechazo de alteraciones y repetición.
-- Relé de desarrollo en memoria, sin base de datos, archivos de mensajes ni registro del cuerpo.
-- Pruebas de cifrado, manipulación, replay, entrega y confirmación local.
-- Adaptador Worker ESM para Sites en `site/worker/index.js`; coordina instancias mediante D1 y guarda únicamente metadatos y ciphertext.
-- D1 elimina lógicamente los mensajes al recibir ACK o al caducar (cinco minutos), y las salas a los 30 minutos. La limpieza de filas caducadas es oportunista; no hay garantía de eliminación física inmediata.
-- Las copias de recuperación del proveedor podrían conservar ciphertext después del borrado lógico. Consulta la retención vigente de D1 para tu cuenta antes de usarlo.
-- Las pruebas locales comprueban acceso desde dos instancias Worker contra una misma base SQLite real. Esto valida el diseño SQL/protocolo, no sustituye la prueba alojada desde dos ordenadores.
+- Local Codex plugin with an MCP server over `stdio` and a security-focused skill.
+- Random 256-bit invitation per room; the secret is never included in relay requests.
+- Per-sender key derived with HKDF-SHA-256; random nonce per message; tampering and replay are rejected.
+- In-memory development relay, with no database, message files, or message-body logging.
+- Tests for encryption, tampering, replay, delivery, and local acknowledgement.
+- ESM Worker adapter for Sites at `site/worker/index.js`; it coordinates instances through D1 and stores metadata and ciphertext only.
+- D1 logically deletes messages when they are acknowledged or expire (five minutes), and rooms after 30 minutes. Expired rows are cleaned up opportunistically; immediate physical deletion is not guaranteed.
+- Provider recovery snapshots may retain ciphertext after logical deletion. Check the current D1 retention policy for your account before using it.
+- Local tests verify access from two Worker instances against the same real SQLite database. This validates the SQL/protocol design; it does not replace a hosted test from two computers.
 
-## Correr las pruebas
+## Run the tests
 
-Requiere Node.js 20 o posterior; las pruebas de integración SQLite de D1 se ejecutan con Node.js 22.5 o posterior (en versiones anteriores se omiten). No hacen falta paquetes de npm:
+Requires Node.js 20 or later. D1 SQLite integration tests run with Node.js 22.5 or later and are skipped on earlier versions. No npm packages are required:
 
 ```powershell
 npm test
 ```
 
-## Probar el relé local
+## Run the local relay
 
-En una terminal:
+In a terminal:
 
 ```powershell
 npm run relay
 ```
 
-El proceso escucha solo en `127.0.0.1:8787`. Las colas viven en RAM, expiran en cinco minutos y se purgan al confirmar la recepción o al detener el proceso. Las salas expiran en 30 minutos. No se escribe contenido en disco.
+The process listens only on `127.0.0.1:8787`. Queues live in RAM, expire after five minutes, and are purged when delivery is acknowledged or the process stops. Rooms expire after 30 minutes. No message content is written to disk.
 
-Para una prueba automatizada completa se usa `npm test`; no hace falta cambiar variables del usuario ni abrir puertos en el router.
+Run `npm test` for the full automated test suite; you do not need to change user environment variables or open router ports.
 
-## Seguridad y límites
+## Security and limitations
 
-- El relé no recibe texto plano ni el secreto de invitación. Sí observa IDs aleatorios, participantes, tamaño aproximado y tiempos; además puede bloquear, retrasar, descartar o repetir paquetes.
-- La invitación es una credencial portadora. Compártela fuera del canal y solo con el otro ordenador deseado. No la envíes con `codex_link_send`.
-- Los secretos permanecen solo en memoria del proceso MCP. Reiniciar Codex o el servidor requiere crear una sala nueva.
-- El texto aparece en las conversaciones de ambos agentes y, por tanto, es visible para sus modelos/proveedores y usuarios. El cifrado no oculta esos extremos.
-- El prototipo no tiene auditoría criptográfica independiente ni forward secrecy: quien obtenga el código de invitación de una sesión podría derivar sus claves. Usa una invitación nueva por sesión y no reutilices códigos.
-- El relé alojado usa D1 porque el almacenamiento compartido entre instancias es necesario para el puente. D1 guarda solo sobres cifrados y metadatos limitados; ten en cuenta que el historial de Time Travel puede retener ciphertext borrado durante más tiempo que el TTL lógico.
+- The relay does not receive plaintext or the invitation secret. It can observe random IDs, participants, approximate message sizes, and timing; it can also block, delay, discard, or replay packets.
+- The invitation is a bearer credential. Share it out of band and only with the intended computer. Never send it with `codex_link_send`.
+- Secrets remain only in the MCP process's memory. Restarting Codex or the server requires creating a new room.
+- Message text appears in both agents' conversations and is therefore visible to their models/providers and users. Encryption does not hide it from either endpoint.
+- The prototype has not had an independent cryptographic audit and does not provide forward secrecy: anyone who obtains a session's invitation code could derive its keys. Use a fresh invitation for every session and never reuse codes.
+- The hosted relay uses D1 because shared storage across instances is required for the bridge. D1 stores encrypted envelopes and limited metadata only; note that Time Travel history may retain deleted ciphertext longer than the logical TTL.
 
-## Instalar y configurar el plugin
+## Install and configure the plugin
 
-En cada ordenador, clona este repositorio y, desde su carpeta raíz, registra e instala el plugin:
+On each computer, clone this repository and register and install the plugin from the repository root:
 
 ```powershell
 codex plugin marketplace add .
 codex plugin add codex-link@codex-link-local
 ```
 
-Después ejecuta `plugin/scripts/configure-windows.ps1`. El asistente solicita el origen HTTPS exacto del Site y los dos tokens; los guarda como variables de entorno del usuario de Windows, no en el repositorio. Cualquier proceso ejecutado con esa cuenta podrá leer esas variables. Reinicia Codex para que el plugin las herede. Configura ambos ordenadores con el mismo Site privado y los mismos tokens; comparte los tokens solo por un canal de confianza.
+Then run `plugin/scripts/configure-windows.ps1`. The setup script asks for the exact HTTPS origin of the Site and two tokens, and stores them as current-user Windows environment variables—not in the repository. Any process running as that user may be able to read those variables. Restart Codex so the plugin inherits them. Configure both computers with the same private Site and token values; share the tokens only through a trusted channel.
 
-El `.mcp.json` del plugin inicia el servidor local y permite únicamente el origen configurado en `CODEX_LINK_SITES_ALLOWED_ORIGIN`. Un relé remoto exige HTTPS y un token de aplicación separado de la clave E2E; para Sites privados, el token de servicio solo se envía a ese origen exacto.
+The plugin's `.mcp.json` starts the local server and allows only the origin configured in `CODEX_LINK_SITES_ALLOWED_ORIGIN`. A remote relay requires HTTPS and an application token separate from the E2E key; for private Sites, the service token is sent only to that exact origin.
 
-Para provisionar un Site propio, copia `site/.openai/hosting.example.json` como `site/.openai/hosting.json` y sustituye el `project_id` vacío por el ID real devuelto al crear tu Site privado. El manifiesto real, los tokens y el artefacto compilado son locales y están excluidos del repositorio.
+To provision your own Site, copy `site/.openai/hosting.example.json` to `site/.openai/hosting.json` and replace the empty `project_id` with the actual ID returned when you create your private Site. The real manifest, tokens, and built artifact are local and excluded from the repository.
