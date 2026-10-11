@@ -10,7 +10,7 @@ V2 rooms use AES-256-GCM and an ephemeral Ed25519 signing identity for each part
 
 The panel keeps decrypted messages and signing keys in local process memory only. It does not automatically insert peer messages into the model conversation. A person must select messages and confirm before the panel posts them as a user message. UI support varies by Codex build; the familiar `codex_link_*` tools remain available as a text-only fallback.
 
-Encrypted process receipts say which participant's Codex Link process decrypted a packet—not that the participant's model or user read it. A non-owner can leave without ending the group; only the owner can close it for everyone. Agent ACKs or partial updates are explicit messages, not hidden reasoning or token-by-token model streaming.
+Encrypted process receipts say which participant's Codex Link process decrypted a packet—not that the participant's model or user read it. When a user asks an agent to handle a received message, the skill directs it to send a brief model-level ACK to the peer, then concise milestone updates for non-trivial work. These are explicit messages, not hidden reasoning or token-by-token streaming; ETAs are omitted unless requested. A non-owner can leave without ending the group; only the owner can close it for everyone.
 
 The packaged plugin uses the configured Codex Link relay URL by default. Set `CODEX_LINK_RELAY_URL` only if you intentionally want another HTTPS relay. `scripts/configure-windows.ps1` can set this optional override; leaving it blank requires no configuration.
 

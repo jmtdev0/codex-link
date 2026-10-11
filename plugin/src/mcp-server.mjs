@@ -17,7 +17,7 @@ const MAX_SESSIONS = 8;
 const MAX_WAIT_MS = 15_000;
 const MAX_TRANSCRIPT_MESSAGES = 100;
 const RECEIPT_PREFIX = "[[codex-link-receipt:v1]]";
-const PANEL_URI = "ui://codex-link/conversation-panel-v0.4.0.html";
+const PANEL_URI = "ui://codex-link/conversation-panel-v0.4.1.html";
 const PANEL_HTML = readFileSync(new URL("../ui/conversation-panel.html", import.meta.url), "utf8");
 
 function appOnly() {
@@ -422,7 +422,7 @@ async function callTool(name, args = {}) {
   if (name === "codex_link_open_panel") {
     return {
       content: [{ type: "text", text: "Codex Link conversation panel is ready. Room messages remain in local memory until this MCP process exits." }],
-      structuredContent: { ready: true, version: "0.4.0" },
+      structuredContent: { ready: true, version: "0.4.1" },
     };
   }
 
@@ -598,7 +598,7 @@ async function handleRequest(message) {
       result: {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {}, resources: {} },
-        serverInfo: { name: "codex-link", version: "0.4.0" },
+        serverInfo: { name: "codex-link", version: "0.4.1" },
         instructions: "Encrypt all text locally. Never send invitation codes or plaintext to the relay.",
       },
     });

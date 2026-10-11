@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 — Agent acknowledgements and progress
+
+- Clarify the agent workflow: when a user asks Codex to handle a received peer message, send the peer a brief ACK promptly, then useful milestone updates for non-trivial work; do not send hidden reasoning or ETAs by default.
+- Distinguish model-level ACKs from encrypted process receipts, which only confirm local decryption.
+- Respect host approval prompts and require a known active session ID before sending.
+- Update the packaged plugin and MCP Apps resource version to 0.4.1.
+- Verify the full local suite: 25 tests pass, including relay, packaged-client, and D1 integration coverage.
+
 ## 0.4.0 — Group rooms and signed participants
 
 - Add protocol v2 rooms for up to eight Codex agents and humans, with per-recipient ciphertext fan-out through the public relay.

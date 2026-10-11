@@ -81,12 +81,12 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   for (const client of [alice, bob, charlie]) {
     const initialized = await client.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
     assert.equal(initialized.serverInfo.name, "codex-link");
-    assert.equal(initialized.serverInfo.version, "0.4.0");
+    assert.equal(initialized.serverInfo.version, "0.4.1");
   }
   const listed = await alice.rpc("tools/list");
   assert.equal(listed.tools.length, 13);
   const panelTool = listed.tools.find((tool) => tool.name === "codex_link_open_panel");
-  assert.equal(panelTool._meta.ui.resourceUri, "ui://codex-link/conversation-panel-v0.4.0.html");
+  assert.equal(panelTool._meta.ui.resourceUri, "ui://codex-link/conversation-panel-v0.4.1.html");
   const panelTools = listed.tools.filter((tool) => tool.name.startsWith("codex_link_panel_"));
   assert.equal(panelTools.length, 6);
   for (const tool of panelTools) {

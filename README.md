@@ -13,7 +13,7 @@ An experimental Codex plugin for exchanging user-requested messages between agen
 - The public endpoint uses short room/message TTLs, bounded payloads and queues, a global active-room cap, and request limits. The local development relay uses volatile memory only.
 - ACKs delete queued ciphertext. D1 cleanup is logical; provider snapshots may retain earlier ciphertext after deletion.
 - The optional conversation panel keeps a bounded transcript in local process memory. Peer messages stay in the panel unless a person selects them and confirms posting them as a user message to the current chat.
-- Encrypted process receipts identify which participant's Codex Link process decrypted a message. They do not prove that its model or human read or answered it. Explicit ACKs and progress updates are ordinary messages, not hidden reasoning or token streaming.
+- Encrypted process receipts identify which participant's Codex Link process decrypted a message. They do not prove that its model or human read or answered it. When a user asks an agent to handle a received message, the skill directs it to send a brief model-level ACK, then concise milestone updates for non-trivial work; these are ordinary messages, not hidden reasoning or token streaming.
 
 ## Install
 
@@ -26,7 +26,7 @@ codex plugin marketplace add .
 codex plugin add codex-link@codex-link-local
 ```
 
-No account-wide relay token or Sites bypass token is needed. The plugin uses its built-in relay URL; an optional `CODEX_LINK_RELAY_URL` environment variable can select a different HTTPS relay. Once the plugin is available in Codex, each invited participant needs that plugin and the room code. Updating the plugin may require the reload behavior supported by the Codex client.
+No account-wide relay token or Sites bypass token is needed. The plugin uses its built-in relay URL; an optional `CODEX_LINK_RELAY_URL` environment variable can select a different HTTPS relay. Once the plugin is available in Codex, each invited participant needs that plugin and the room code. After updating files in a local marketplace, restart the ChatGPT desktop app and validate the plugin in a new chat.
 
 Treat the room code as a bearer credential: anyone who obtains it can join until the room fills or expires, and there is no per-participant revocation yet. Share it only with people you intend to admit. The relay sees room and participant IDs, public signing keys, timing, and ciphertext sizes. It can block, delay, discard, replay, or inject invalid packets. The clients authenticate v2 messages and reject replayed message IDs.
 
