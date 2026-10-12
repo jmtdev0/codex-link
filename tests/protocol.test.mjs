@@ -4,6 +4,7 @@ import {
   createIdentity,
   createInvitation,
   decryptMessage,
+  decryptMessagePayload,
   deriveRoomCapability,
   encryptMessage,
   parseInvitation,
@@ -41,6 +42,26 @@ test("v2 authenticates sender identity and encrypts message contents", () => {
   const envelope = encryptMessage(invitation, identity.participantId, "hola desde Codex", identity);
   assert.equal(decryptMessage(parseInvitation(invitation.code), envelope, new Set()), "hola desde Codex");
   assert.equal(JSON.stringify(envelope).includes("hola desde Codex"), false);
+});
+
+test("typed agent messages and reply references are authenticated inside ciphertext", () => {
+  const invitation = createInvitation();
+  const identity = createIdentity();
+  const replyTarget = randomId();
+  const envelope = encryptMessage(invitation, identity.participantId, "respuesta final", identity, {
+    messageType: "agent_reply",
+    inReplyTo: replyTarget,
+  });
+  const serializedEnvelope = JSON.stringify(envelope);
+  assert.equal(serializedEnvelope.includes("respuesta final"), false);
+  assert.equal(serializedEnvelope.includes("agent_reply"), false);
+  assert.equal(serializedEnvelope.includes(replyTarget), false);
+  assert.deepEqual(decryptMessagePayload(invitation, envelope), {
+    text: "respuesta final",
+    messageType: "agent_reply",
+    inReplyTo: replyTarget,
+  });
+  assert.equal(decryptMessage(invitation, envelope), "respuesta final");
 });
 
 test("v2 rejects ciphertext, identity substitution, bad signatures, and replays", () => {

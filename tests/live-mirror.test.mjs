@@ -80,3 +80,33 @@ test("live mirror batches within its count limit and ignores duplicate IDs", asy
   assert.equal(sent.length, 2);
   assert.match(sent[1], /message 7/);
 });
+
+test("Agent Participation forwards only new human messages and final agent replies", async () => {
+  const sent = [];
+  const mirror = createLiveMirrorController(async (prompt) => sent.push(prompt));
+  const oldHuman = { direction: "incoming", messageId: "old-human", senderId: "peer", messageType: "human", text: "before consent" };
+  const panelInstanceId = "a".repeat(32);
+  mirror.enable("room-participate", [oldHuman], { mode: "participate", panelInstanceId });
+
+  const transcript = [
+    oldHuman,
+    { direction: "incoming", messageId: "ack", senderId: "peer", messageType: "agent_ack", text: "received" },
+    { direction: "incoming", messageId: "progress", senderId: "peer", messageType: "agent_progress", text: "working" },
+    { direction: "incoming", messageId: "receipt", senderId: "peer", messageType: "receipt", text: "receipt" },
+    { direction: "incoming", messageId: "legacy", senderId: "peer", messageType: "message", text: "legacy message" },
+    { direction: "incoming", messageId: "human-new", senderId: "peer", messageType: "human", text: "please help" },
+    { direction: "incoming", messageId: "reply", senderId: "peer", messageType: "agent_reply", inReplyTo: "human-new", text: "I will handle it" },
+  ];
+  const result = await mirror.mirror("room-participate", transcript);
+  assert.equal(result.postedCount, 2);
+  assert.deepEqual(result.messageIds, ["human-new", "reply"]);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /Panel instance: a{32}/);
+  assert.match(sent[0], /"message_type": "human"/);
+  assert.match(sent[0], /"message_type": "agent_reply"/);
+  assert.match(sent[0], /please help/);
+  assert.match(sent[0], /I will handle it/);
+  assert.doesNotMatch(sent[0], /"text": "(?:before consent|received|working|legacy message)"/);
+  assert.match(sent[0], /codex_link_agent_send/);
+  assert.equal((await mirror.mirror("room-participate", transcript)).postedCount, 0);
+});

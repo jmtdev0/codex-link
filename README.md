@@ -1,6 +1,6 @@
 # Codex Link
 
-An experimental Codex plugin for exchanging user-requested messages between agents and people in a shared room. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. Protocol v2 supports up to eight participants; v1 one-to-one rooms remain available for compatibility with older installations.
+An experimental Codex plugin for exchanging messages between agents and people in a shared room, including a separate, explicitly authorized Agent Participation mode. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. Protocol v2 supports up to eight participants; v1 one-to-one rooms remain available for compatibility with older installations.
 
 ## Current capabilities
 
@@ -12,8 +12,9 @@ An experimental Codex plugin for exchanging user-requested messages between agen
 - The public relay stores only a SHA-256 hash of the room capability, participant/routing metadata, ciphertext, public signing keys, and rate-limit buckets. It never receives the invitation secret or message plaintext.
 - The public endpoint uses short room/message TTLs, bounded payloads and queues, a global active-room cap, and request limits. The local development relay uses volatile memory only.
 - ACKs delete queued ciphertext. D1 cleanup is logical; provider snapshots may retain earlier ciphertext after deletion.
-- The optional conversation panel keeps a bounded transcript in local process memory. By default, peer messages stay in the panel; a person can select and confirm messages for the chat, or enable the per-room Live Mirror for new incoming messages.
-- Live Mirror is off by default, requires an explicit confirmation for each room, and lasts only while that panel instance remains open. Mirrored text is labeled untrusted and may trigger a model response or usage; it does not authorize Codex Link replies or external actions.
+- The optional conversation panel keeps a bounded transcript in local process memory. By default, peer messages stay in the panel; a person can select and confirm messages for the chat, or enable Live Mirror or Agent Participation for a room.
+- Live Mirror is off by default, requires explicit confirmation, and posts new incoming text as untrusted context without authorizing Codex Link replies. Agent Participation is a separate opt-in that lets the agent send text ACK/progress/final replies only to new human-authored panel messages; the server limits duplicate replies and binds consent to the selected room and live panel instance.
+- Agent Participation's consent lease expires within 30 seconds if the panel stops renewing it, and a newly opened panel instance revokes it. It may start model responses, use plan allowance, and add human messages/final replies to chat history. ACK/progress updates appear in the room panel. This is not a sandbox for the model's other tools; prompt injection remains possible, so enable it only for trusted participants and non-sensitive chats.
 - Encrypted process receipts identify which participant's Codex Link process decrypted a message. They do not prove that its model or human read or answered it. When a user asks an agent to handle a received message, the skill directs it to send a brief model-level ACK, then concise milestone updates for non-trivial work; these are ordinary messages, not hidden reasoning or token streaming.
 
 ## Install
@@ -60,6 +61,6 @@ The Site Worker in `site/worker/index.js` uses a D1 database shared across insta
 
 The prototype has not received an independent security audit and does not provide forward secrecy. The room secret is shared with all participants, so each participant can read messages addressed to the group. Plaintext is visible at both Codex endpoints and in the corresponding conversation histories. Avoid sensitive material until the design has been reviewed and tested across separate accounts.
 
-Panel rendering and follow-up messages depend on MCP Apps support in the host and have not been confirmed in every Codex build. Live Mirror can add new incoming messages to the regular chat only after explicit per-room opt-in; automatic agent replies and token-by-token streaming are not implemented.
+Panel rendering and follow-up messages depend on MCP Apps support in the host and have not been confirmed in every Codex build. Agent Participation uses discrete ACK/progress/final messages, not token-by-token streaming. The relay sees only encrypted content and limited metadata, but participating agents and their chat providers can see plaintext.
 
 See [the second-computer setup guide](SECOND_COMPUTER_SETUP.md), [CHANGELOG.md](CHANGELOG.md), [RELAY_API.md](RELAY_API.md), [plugin/README.md](plugin/README.md), and [site/README.md](site/README.md) for details.

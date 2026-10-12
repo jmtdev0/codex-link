@@ -96,22 +96,25 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
     assert.equal(initialized.serverInfo.version, pluginVersion);
   }
   const listed = await alice.rpc("tools/list");
-  assert.equal(listed.tools.length, 13);
+  assert.equal(listed.tools.length, 15);
   const panelTool = listed.tools.find((tool) => tool.name === "codex_link_open_panel");
   assert.equal(panelTool._meta.ui.resourceUri, `ui://codex-link/conversation-panel-v${pluginVersion}.html`);
   const panelTools = listed.tools.filter((tool) => tool.name.startsWith("codex_link_panel_"));
-  assert.equal(panelTools.length, 6);
+  assert.equal(panelTools.length, 7);
   for (const tool of panelTools) {
     assert.deepEqual(tool._meta.ui.visibility, ["app"]);
     assert.ok(tool.outputSchema, `${tool.name} should declare its structured output`);
   }
   assert.ok(listed.tools.find((tool) => tool.name === "codex_link_receive").outputSchema);
+  assert.equal(listed.tools.find((tool) => tool.name === "codex_link_agent_send")._meta?.ui?.visibility, undefined);
   const resources = await alice.rpc("resources/list");
   assert.equal(resources.resources[0].uri, panelTool._meta.ui.resourceUri);
   const panelResource = await alice.rpc("resources/read", { uri: panelTool._meta.ui.resourceUri });
   assert.equal(panelResource.contents[0].mimeType, "text/html;profile=mcp-app");
   assert.match(panelResource.contents[0].text, /Confirm and post to chat/);
   assert.match(panelResource.contents[0].text, /Enable live mirror/);
+  assert.match(panelResource.contents[0].text, /Enable Agent Participation/);
+  assert.match(panelResource.contents[0].text, /does not sandbox the model's other tools/);
   assert.match(panelResource.contents[0].text, /only applies to new messages/);
   assert.match(panelResource.contents[0].text, /function createLiveMirrorController/);
   assert.match(panelResource.contents[0].text, /human explicitly enabled live mirroring/);
@@ -210,6 +213,135 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   const updatedAliceState = await callTool(alice, "codex_link_panel_state");
   assert.equal(updatedAliceState._meta.transcriptSessionId, panelSessionA);
   assert.ok(updatedAliceState._meta.transcript.find((message) => message.text === panelPlaintext).acknowledgedAt);
+
+  const panelInstanceId = "a".repeat(32);
+  const beforeConsent = await callTool(bob, "codex_link_panel_state", { session_id: panelSessionB, panel_instance_id: panelInstanceId });
+  assert.equal(beforeConsent._meta.sessions.find((session) => session.sessionId === panelSessionB).agentParticipation, false);
+  const optedIn = await callTool(bob, "codex_link_panel_set_agent_participation", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    enabled: true,
+  });
+  assert.deepEqual(optedIn.structuredContent, { enabled: true });
+  const afterConsent = await callTool(bob, "codex_link_panel_state", { session_id: panelSessionB, panel_instance_id: panelInstanceId });
+  assert.equal(afterConsent._meta.sessions.find((session) => session.sessionId === panelSessionB).agentParticipation, true);
+  const ungatedSendDuringParticipation = await callTool(bob, "codex_link_send", {
+    session_id: panelSessionB,
+    message: "The ungated send path must be unavailable during Agent Participation.",
+  });
+  assert.equal(ungatedSendDuringParticipation.isError, true);
+  const earlierHuman = panelReceived._meta.messages[0];
+  const staleReply = await callTool(bob, "codex_link_agent_send", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    in_reply_to_message_id: earlierHuman.messageId,
+    message_type: "agent_ack",
+    message: "This old message must not trigger a reply.",
+  });
+  assert.equal(staleReply.isError, true);
+
+  const newHumanText = "new human message after consent";
+  await callTool(alice, "codex_link_panel_send", { session_id: panelSessionA, message: newHumanText });
+  const newHumanReceived = await callTool(bob, "codex_link_panel_receive", { session_id: panelSessionB, wait_ms: 0 });
+  assert.equal(newHumanReceived._meta.messages.length, 1);
+  const newHuman = newHumanReceived._meta.messages[0];
+  assert.equal(newHuman.messageType, "human");
+
+  const wrongPanelReply = await callTool(bob, "codex_link_agent_send", {
+    session_id: panelSessionB,
+    panel_instance_id: "b".repeat(32),
+    in_reply_to_message_id: newHuman.messageId,
+    message_type: "agent_ack",
+    message: "Wrong panel must not send.",
+  });
+  assert.equal(wrongPanelReply.isError, true);
+  const ackSent = await callTool(bob, "codex_link_agent_send", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    in_reply_to_message_id: newHuman.messageId,
+    message_type: "agent_ack",
+    message: "Received; I will look into it.",
+  });
+  readToolText(ackSent);
+  const duplicateAck = await callTool(bob, "codex_link_agent_send", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    in_reply_to_message_id: newHuman.messageId,
+    message_type: "agent_ack",
+    message: "A second ACK is rejected.",
+  });
+  assert.equal(duplicateAck.isError, true);
+  for (let progressIndex = 0; progressIndex < 8; progressIndex += 1) {
+    const sent = await callTool(bob, "codex_link_agent_send", {
+      session_id: panelSessionB,
+      panel_instance_id: panelInstanceId,
+      in_reply_to_message_id: newHuman.messageId,
+      message_type: "agent_progress",
+      message: `Progress ${progressIndex + 1}.`,
+    });
+    readToolText(sent);
+  }
+  const ninthProgress = await callTool(bob, "codex_link_agent_send", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    in_reply_to_message_id: newHuman.messageId,
+    message_type: "agent_progress",
+    message: "This progress update exceeds the cap.",
+  });
+  assert.equal(ninthProgress.isError, true);
+  const finalReply = await callTool(bob, "codex_link_agent_send", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    in_reply_to_message_id: newHuman.messageId,
+    message_type: "agent_reply",
+    message: "Here is the answer.",
+  });
+  readToolText(finalReply);
+  const duplicateFinal = await callTool(bob, "codex_link_agent_send", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    in_reply_to_message_id: newHuman.messageId,
+    message_type: "agent_reply",
+    message: "A second final answer is rejected.",
+  });
+  assert.equal(duplicateFinal.isError, true);
+  const relayAfterAgentReplies = JSON.stringify([...relay.rooms.entries()]);
+  assert.equal(relayAfterAgentReplies.includes(newHumanText), false);
+  assert.equal(relayAfterAgentReplies.includes("agent_ack"), false);
+  assert.equal(relayAfterAgentReplies.includes("agent_reply"), false);
+
+  const aliceAgentMessages = await callTool(alice, "codex_link_panel_receive", { session_id: panelSessionA, wait_ms: 0 });
+  assert.deepEqual(aliceAgentMessages._meta.messages.map((message) => message.messageType), ["agent_ack", ...Array(8).fill("agent_progress"), "agent_reply"]);
+  assert.ok(aliceAgentMessages._meta.messages.every((message) => message.inReplyTo === newHuman.messageId));
+  const bobTranscriptAfterReply = await callTool(bob, "codex_link_panel_state", { session_id: panelSessionB, panel_instance_id: panelInstanceId });
+  assert.deepEqual(
+    bobTranscriptAfterReply._meta.transcript.filter((message) => message.direction === "outgoing").map((message) => message.messageType),
+    ["agent_ack", ...Array(8).fill("agent_progress"), "agent_reply"],
+  );
+  const optedOut = await callTool(bob, "codex_link_panel_set_agent_participation", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    enabled: false,
+  });
+  assert.deepEqual(optedOut.structuredContent, { enabled: false });
+  const blockedAfterOptOut = await callTool(bob, "codex_link_agent_send", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    in_reply_to_message_id: newHuman.messageId,
+    message_type: "agent_ack",
+    message: "Participation is off now.",
+  });
+  assert.equal(blockedAfterOptOut.isError, true);
+  await callTool(bob, "codex_link_panel_set_agent_participation", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    enabled: true,
+  });
+  const reopenedPanelState = await callTool(bob, "codex_link_panel_state", {
+    session_id: panelSessionB,
+    panel_instance_id: "c".repeat(32),
+  });
+  assert.equal(reopenedPanelState._meta.sessions.find((session) => session.sessionId === panelSessionB).agentParticipation, false);
 
   const bobPanelLeave = await callTool(bob, "codex_link_panel_disconnect", { session_id: panelSessionB });
   assert.deepEqual(bobPanelLeave.structuredContent, { disconnected: true, relayClosed: false, relayLeft: true });

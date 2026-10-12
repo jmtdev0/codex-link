@@ -1,4 +1,4 @@
-import { randomId, createIdentity, createInvitation, parseInvitation, deriveRoomCapability, encryptMessage, decryptMessage, MAX_ROOM_PARTICIPANTS } from "./protocol.mjs";
+import { randomId, createIdentity, createInvitation, parseInvitation, deriveRoomCapability, encryptMessage, decryptMessagePayload, MAX_ROOM_PARTICIPANTS } from "./protocol.mjs";
 import { createLiveMirrorController } from "./live-mirror.mjs";
 import { readFileSync } from "node:fs";
 import {
@@ -17,8 +17,10 @@ const sessions = new Map();
 const MAX_SESSIONS = 8;
 const MAX_WAIT_MS = 15_000;
 const MAX_TRANSCRIPT_MESSAGES = 100;
+const AGENT_PARTICIPATION_LEASE_MS = 30_000;
+const MAX_AGENT_PROGRESS_MESSAGES = 8;
 const RECEIPT_PREFIX = "[[codex-link-receipt:v1]]";
-const PANEL_URI = "ui://codex-link/conversation-panel-v0.4.3.html";
+const PANEL_URI = "ui://codex-link/conversation-panel-v0.5.0.html";
 const panelTemplate = readFileSync(new URL("../ui/conversation-panel.html", import.meta.url), "utf8");
 const PANEL_HTML = panelTemplate.replace("/* CODEX_LINK_LIVE_MIRROR_HELPER */", createLiveMirrorController.toString());
 if (PANEL_HTML === panelTemplate) throw new Error("The conversation panel is missing its live-mirror helper insertion point.");
@@ -31,7 +33,7 @@ const tools = [
   {
     name: "codex_link_open_panel",
     title: "Open Codex Link conversation panel",
-    description: "Open the Codex Link conversation panel to create or join a room, exchange messages, review its in-memory transcript, and optionally enable per-room live mirroring of new incoming messages after explicit confirmation. Use this when the user asks to view or manage a Codex Link conversation.",
+    description: "Open the Codex Link conversation panel to create or join a room, exchange messages, review its in-memory transcript, optionally mirror new messages into the chat, or explicitly enable per-room Agent Participation for human messages.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     outputSchema: {
       type: "object",
@@ -63,7 +65,7 @@ const tools = [
   },
   {
     name: "codex_link_send",
-    description: "Encrypt text locally and send only the authenticated ciphertext to the paired relay room.",
+    description: "Encrypt a user-authorized agent message locally and send only the authenticated ciphertext to the paired relay room. Use only when the local human explicitly asks you to send a message; automatic Agent Participation uses the separately gated codex_link_agent_send tool.",
     inputSchema: {
       type: "object",
       properties: {
@@ -71,6 +73,22 @@ const tools = [
         message: { type: "string", minLength: 1, maxLength: 8192 },
       },
       required: ["session_id", "message"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "codex_link_agent_send",
+    description: "Send a typed ACK, progress update, or reply to one incoming human message. This tool works only while Agent Participation is explicitly enabled in the matching open room panel; it cannot send replies to other message types and prevents duplicate ACKs/replies.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 22, maxLength: 22 },
+        panel_instance_id: { type: "string", minLength: 32, maxLength: 32 },
+        in_reply_to_message_id: { type: "string", minLength: 22, maxLength: 22 },
+        message_type: { type: "string", enum: ["agent_ack", "agent_progress", "agent_reply"] },
+        message: { type: "string", minLength: 1, maxLength: 8192 },
+      },
+      required: ["session_id", "panel_instance_id", "in_reply_to_message_id", "message_type", "message"],
       additionalProperties: false,
     },
   },
@@ -98,9 +116,11 @@ const tools = [
               senderId: { type: "string" },
               direction: { type: "string", enum: ["incoming"] },
               receivedAt: { type: "string" },
+              messageType: { type: "string", enum: ["message", "human", "agent_ack", "agent_progress", "agent_reply", "receipt"] },
+              inReplyTo: { type: "string" },
               text: { type: "string" },
             },
-            required: ["messageId", "senderId", "direction", "receivedAt", "text"],
+            required: ["messageId", "senderId", "direction", "receivedAt", "messageType", "text"],
             additionalProperties: false,
           },
         },
@@ -169,7 +189,7 @@ const tools = [
   },
   {
     name: "codex_link_panel_send",
-    description: "Send a human-composed message from the Codex Link panel; encrypts locally before relaying.",
+    description: "Send a human-composed message from the Codex Link panel; encrypts locally before relaying and marks it as a human message for opted-in Agent Participation.",
     inputSchema: {
       type: "object",
       properties: {
@@ -214,16 +234,40 @@ const tools = [
   },
   {
     name: "codex_link_panel_state",
-    description: "Read active rooms and their bounded in-memory transcript for the Codex Link panel only.",
+    description: "Read active rooms and their bounded in-memory transcript for the Codex Link panel only. Renew Agent Participation only for the matching live panel instance.",
     inputSchema: {
       type: "object",
-      properties: { session_id: { type: "string", minLength: 22, maxLength: 22 } },
+      properties: {
+        session_id: { type: "string", minLength: 22, maxLength: 22 },
+        panel_instance_id: { type: "string", pattern: "^[a-f0-9]{32}$" },
+      },
       additionalProperties: false,
     },
     outputSchema: {
       type: "object",
       properties: { sessionCount: { type: "integer" } },
       required: ["sessionCount"],
+      additionalProperties: false,
+    },
+    _meta: appOnly(),
+  },
+  {
+    name: "codex_link_panel_set_agent_participation",
+    description: "Enable or disable Agent Participation for one room from its visible panel after a separate explicit user confirmation. Consent expires when the matching panel stops renewing its short lease.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 22, maxLength: 22 },
+        panel_instance_id: { type: "string", pattern: "^[a-f0-9]{32}$" },
+        enabled: { type: "boolean" },
+      },
+      required: ["session_id", "panel_instance_id", "enabled"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: { enabled: { type: "boolean" } },
+      required: ["enabled"],
       additionalProperties: false,
     },
     _meta: appOnly(),
@@ -299,6 +343,8 @@ async function createLocalRoom(baseUrl) {
     participants: [{ participantId, role: "owner" }],
     seen: new Set(),
     transcript: [],
+    agentParticipation: null,
+    agentReplyState: new Map(),
     expiresAt: Date.parse(created.expiresAt),
   });
   return { invitation, participantId, sessionId, expiresAt: created.expiresAt };
@@ -339,6 +385,8 @@ async function joinLocalRoom(baseUrl, code) {
     participants: normalizeParticipants(joined.participants, participantId),
     seen: new Set(),
     transcript: [],
+    agentParticipation: null,
+    agentReplyState: new Map(),
     expiresAt: Date.parse(joined.expiresAt),
   });
   return { invitation, participantId, sessionId, expiresAt: joined.expiresAt };
@@ -373,11 +421,12 @@ async function receiveForSession(baseUrl, session, waitMs) {
   for (const envelope of response.messages ?? []) {
     if (typeof envelope?.messageId === "string") acknowledgements.push(envelope.messageId);
     try {
-      const text = decryptMessage(session.invitation, envelope, session.seen);
+      const payload = decryptMessagePayload(session.invitation, envelope, session.seen);
+      const { text, messageType, inReplyTo } = payload;
       const receiptMatch = text.match(/^\[\[codex-link-receipt:v1\]\]([A-Za-z0-9_-]{22})$/);
-      if (receiptMatch) {
+      if (receiptMatch || messageType === "receipt") {
         const sentMessage = session.transcript.find((message) =>
-          message.direction === "outgoing" && message.messageId === receiptMatch[1]);
+          message.direction === "outgoing" && receiptMatch && message.messageId === receiptMatch[1]);
         if (sentMessage) {
           sentMessage.acknowledgedBy ??= [];
           if (!sentMessage.acknowledgedBy.includes(envelope.senderId)) {
@@ -393,12 +442,21 @@ async function receiveForSession(baseUrl, session, waitMs) {
         senderId: envelope.senderId,
         direction: "incoming",
         receivedAt: new Date().toISOString(),
+        messageType,
+        ...(inReplyTo ? { inReplyTo } : {}),
         text,
       };
+      const participation = session.agentParticipation;
+      if (messageType === "human" && participation && Date.now() < participation.leaseExpiresAt) {
+        participation.eligibleMessageIds.add(message.messageId);
+        if (participation.eligibleMessageIds.size > MAX_TRANSCRIPT_MESSAGES) {
+          participation.eligibleMessageIds.delete(participation.eligibleMessageIds.values().next().value);
+        }
+      }
       received.push(message);
       appendTranscript(session, message);
       try {
-        const receipt = encryptMessage(session.invitation, session.participantId, `${RECEIPT_PREFIX}${envelope.messageId}`, session.identity);
+        const receipt = encryptMessage(session.invitation, session.participantId, `${RECEIPT_PREFIX}${envelope.messageId}`, session.identity, { messageType: "receipt" });
         await sendEnvelope(baseUrl, receipt, session.roomCapability);
       } catch {
         acknowledgementFailures += 1;
@@ -425,7 +483,7 @@ async function callTool(name, args = {}) {
   if (name === "codex_link_open_panel") {
     return {
       content: [{ type: "text", text: "Codex Link conversation panel is ready. Room messages remain in local memory until this MCP process exits." }],
-      structuredContent: { ready: true, version: "0.4.3" },
+      structuredContent: { ready: true, version: "0.5.0" },
     };
   }
 
@@ -463,6 +521,10 @@ async function callTool(name, args = {}) {
 
   if (name === "codex_link_send") {
     const session = getSession(args.session_id);
+    if (session.agentParticipation && Date.now() < session.agentParticipation.leaseExpiresAt) {
+      throw new Error("Agent Participation is active. Use codex_link_agent_send for an eligible new human message, or pause participation first.");
+    }
+    if (session.agentParticipation) session.agentParticipation = null;
     const envelope = encryptMessage(session.invitation, session.participantId, args.message, session.identity);
     await sendEnvelope(baseUrl, envelope, session.roomCapability);
     appendTranscript(session, {
@@ -470,6 +532,7 @@ async function callTool(name, args = {}) {
       senderId: session.participantId,
       direction: "outgoing",
       receivedAt: new Date().toISOString(),
+      messageType: "message",
       acknowledgedAt: null,
       acknowledgedBy: [],
       text: args.message,
@@ -477,15 +540,77 @@ async function callTool(name, args = {}) {
     return toolResult(`Sent one encrypted message (${envelope.messageId}). Plaintext was not sent to the relay.`);
   }
 
+  if (name === "codex_link_agent_send") {
+    const session = getSession(args.session_id);
+    const participation = session.agentParticipation;
+    if (!participation || participation.panelInstanceId !== args.panel_instance_id || Date.now() >= participation.leaseExpiresAt) {
+      if (participation && Date.now() >= participation.leaseExpiresAt) session.agentParticipation = null;
+      throw new Error("Agent Participation is not active for this panel. Enable it in the room panel and keep that panel open.");
+    }
+    const messageType = args.message_type;
+    if (!["agent_ack", "agent_progress", "agent_reply"].includes(messageType)) {
+      throw new Error("Unsupported Agent Participation message type.");
+    }
+    const target = session.transcript.find((message) =>
+      message.direction === "incoming" && message.messageId === args.in_reply_to_message_id && message.messageType === "human");
+    if (!target || !participation.eligibleMessageIds.has(target.messageId)) {
+      throw new Error("Replies are permitted only to a new human message received after Agent Participation was enabled in this room.");
+    }
+    let replyState = session.agentReplyState.get(target.messageId);
+    if (!replyState) {
+      replyState = { acknowledged: false, ackInFlight: false, progressCount: 0, progressInFlight: false, replied: false, replyInFlight: false };
+      session.agentReplyState.set(target.messageId, replyState);
+    }
+    if (messageType === "agent_ack") {
+      if (replyState.acknowledged || replyState.ackInFlight || replyState.replied) throw new Error("This human message already has an ACK or final reply.");
+      replyState.ackInFlight = true;
+    } else if (messageType === "agent_progress") {
+      if (!replyState.acknowledged || replyState.replied || replyState.replyInFlight || replyState.progressInFlight || replyState.progressCount >= MAX_AGENT_PROGRESS_MESSAGES) {
+        throw new Error("Progress requires an ACK, must precede the final reply, and is limited to eight updates per human message.");
+      }
+      replyState.progressInFlight = true;
+    } else {
+      if (!replyState.acknowledged || replyState.replied || replyState.progressInFlight || replyState.replyInFlight) throw new Error("Send one ACK before one final reply; a final reply can be sent only once and after progress sends complete.");
+      replyState.replyInFlight = true;
+    }
+    try {
+      const envelope = encryptMessage(session.invitation, session.participantId, args.message, session.identity, {
+        messageType,
+        inReplyTo: target.messageId,
+      });
+      await sendEnvelope(baseUrl, envelope, session.roomCapability);
+      appendTranscript(session, {
+        messageId: envelope.messageId,
+        senderId: session.participantId,
+        direction: "outgoing",
+        receivedAt: new Date().toISOString(),
+        messageType,
+        inReplyTo: target.messageId,
+        acknowledgedAt: null,
+        acknowledgedBy: [],
+        text: args.message,
+      });
+      if (messageType === "agent_ack") replyState.acknowledged = true;
+      else if (messageType === "agent_progress") replyState.progressCount += 1;
+      else replyState.replied = true;
+      return toolResult(`Sent one encrypted ${messageType} for human message ${target.messageId}.`);
+    } finally {
+      if (messageType === "agent_ack") replyState.ackInFlight = false;
+      else if (messageType === "agent_progress") replyState.progressInFlight = false;
+      else replyState.replyInFlight = false;
+    }
+  }
+
   if (name === "codex_link_panel_send") {
     const session = getSession(args.session_id);
-    const envelope = encryptMessage(session.invitation, session.participantId, args.message, session.identity);
+    const envelope = encryptMessage(session.invitation, session.participantId, args.message, session.identity, { messageType: "human" });
     await sendEnvelope(baseUrl, envelope, session.roomCapability);
     appendTranscript(session, {
       messageId: envelope.messageId,
       senderId: session.participantId,
       direction: "outgoing",
       receivedAt: new Date().toISOString(),
+      messageType: "human",
       acknowledgedAt: null,
       acknowledgedBy: [],
       text: args.message,
@@ -523,11 +648,22 @@ async function callTool(name, args = {}) {
   }
 
   if (name === "codex_link_panel_state") {
+    const panelInstanceId = args.panel_instance_id;
+    if (panelInstanceId !== undefined && !/^[a-f0-9]{32}$/.test(panelInstanceId)) {
+      throw new Error("Invalid panel instance ID.");
+    }
     const activeSessions = [];
     for (const [sessionId, session] of sessions) {
       if (Date.now() >= session.expiresAt) {
         sessions.delete(sessionId);
         continue;
+      }
+      if (session.agentParticipation) {
+        if (sessionId !== args.session_id || session.agentParticipation.panelInstanceId !== panelInstanceId || Date.now() >= session.agentParticipation.leaseExpiresAt) {
+          session.agentParticipation = null;
+        } else {
+          session.agentParticipation.leaseExpiresAt = Date.now() + AGENT_PARTICIPATION_LEASE_MS;
+        }
       }
       activeSessions.push({
         sessionId,
@@ -538,6 +674,10 @@ async function callTool(name, args = {}) {
         participants: session.participants,
         isOwner: session.isOwner,
         expiresAt: new Date(session.expiresAt).toISOString(),
+        agentParticipation: Boolean(session.agentParticipation),
+        agentParticipationLeaseExpiresAt: session.agentParticipation
+          ? new Date(session.agentParticipation.leaseExpiresAt).toISOString()
+          : null,
       });
     }
     const selectedSessionId = activeSessions.some((session) => session.sessionId === args.session_id)
@@ -551,6 +691,26 @@ async function callTool(name, args = {}) {
       `Loaded ${activeSessions.length} active local room(s). Transcript data remains in this process's memory only.`,
       { sessionCount: activeSessions.length },
       { sessions: activeSessions, transcriptSessionId: selectedSessionId ?? null, transcript },
+    );
+  }
+
+  if (name === "codex_link_panel_set_agent_participation") {
+    const session = getSession(args.session_id);
+    if (!/^[a-f0-9]{32}$/.test(args.panel_instance_id)) throw new Error("Invalid panel instance ID.");
+    if (args.enabled) {
+      session.agentParticipation = {
+        panelInstanceId: args.panel_instance_id,
+        leaseExpiresAt: Date.now() + AGENT_PARTICIPATION_LEASE_MS,
+        eligibleMessageIds: new Set(),
+      };
+      session.agentReplyState = new Map();
+    } else {
+      session.agentParticipation = null;
+      session.agentReplyState = new Map();
+    }
+    return appToolResult(
+      args.enabled ? "Agent Participation enabled for this room and panel instance." : "Agent Participation disabled for this room.",
+      { enabled: Boolean(args.enabled) },
     );
   }
 
@@ -601,7 +761,7 @@ async function handleRequest(message) {
       result: {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {}, resources: {} },
-        serverInfo: { name: "codex-link", version: "0.4.3" },
+        serverInfo: { name: "codex-link", version: "0.5.0" },
         instructions: "Encrypt all text locally. Never send invitation codes or plaintext to the relay.",
       },
     });

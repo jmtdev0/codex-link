@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 — Opt-in Agent Participation
+
+- Add a separate, explicit per-room Agent Participation mode that posts new human-authored room messages into the active chat and permits typed agent ACK, progress, and one final text reply.
+- Keep Live Mirror as a non-replying mode; make the two modes mutually exclusive per selected room.
+- Bind consent to the visible panel instance and selected room with a 30-second renewable lease; opening another panel, switching rooms, or stopping renewals revokes participation.
+- Encrypt message types and reply references inside the existing E2E payload; the relay still sees ciphertext only.
+- Restrict automatic replies to new human messages received after consent; require an ACK before progress/final replies, allow at most eight progress updates, and reject duplicate ACK/final replies.
+- Keep ACK/progress updates in the panel to avoid repeated model turns; mirror human messages and final agent replies into chat history.
+- Warn that participation can use plan allowance and is not a sandbox for unrelated model tools; prompt injection remains a risk. No independent security audit is implied.
+- Add protocol, mirror, and end-to-end MCP tests for encrypted message types, participation consent, stale/wrong-panel rejection, reply limits, and post-opt-out denial.
+
 ## 0.4.3 — Version metadata correction
 
 - Align the packaged plugin manifest with the MCP server and conversation panel so marketplace installs can distinguish the current release.

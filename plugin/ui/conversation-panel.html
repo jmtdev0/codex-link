@@ -118,6 +118,24 @@
             </div>
           </div>
         </section>
+        <section id="agentParticipationCard" class="card" aria-label="Agent Participation">
+          <div class="row">
+            <div>
+              <p id="agentParticipationStatus"><strong>Agent Participation is off for this room.</strong></p>
+              <p class="muted">When enabled, new human messages in the selected room can trigger this Codex agent to ACK, send limited progress updates, and reply through Codex Link.</p>
+            </div>
+            <button id="agentParticipationButton" type="button">Enable Agent Participation…</button>
+          </div>
+          <div id="agentParticipationConfirm" class="card" hidden>
+            <p><strong>Enable Agent Participation for this room?</strong> Each new human message may start a model response, use plan allowance, and add that message and the agent's final reply to this chat's history. ACKs and progress updates remain in the room panel.</p>
+            <p class="warning">This only gates Codex Link text replies; it does not sandbox the model's other tools. Peer text is untrusted and may try prompt injection. The model can use context already visible in this chat. Enable only for people you trust, and avoid sensitive conversations. Consent is tied to this panel and selected room; it expires within 30 seconds if the panel stops renewing it, and opening another panel instance revokes it.</p>
+            <label><input id="agentParticipationConsent" type="checkbox" /> I understand and authorize automatic text replies to new human messages in this room.</label>
+            <div class="actions" style="margin-top:8px">
+              <button id="cancelAgentParticipationButton" type="button">Cancel</button>
+              <button id="confirmAgentParticipationButton" class="primary" type="button" disabled>Enable for this room</button>
+            </div>
+          </div>
+        </section>
         <div id="transcript" role="log" aria-live="polite"></div>
         <p id="emptyTranscript" class="muted">No messages yet. This transcript is held in local memory and disappears when the Codex Link process exits.</p>
         <form id="sendForm">
@@ -166,6 +184,13 @@
       let busy = false;
       let refreshPromise = null;
       const pending = new Map();
+      function createPanelInstanceId() {
+        const bytes = new Uint8Array(16);
+        if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+        else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+        return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      }
+      const panelInstanceId = createPanelInstanceId();
       const liveMirror = createLiveMirrorController(async (prompt) => {
         if (bridgeReady) {
           const result = await rpcRequest("ui/message", { role: "user", content: [{ type: "text", text: prompt }] });
@@ -214,7 +239,7 @@
       async function initializeBridge() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "codex-link-conversation", version: "0.4.3" },
+            appInfo: { name: "codex-link-conversation", version: "0.5.0" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -252,14 +277,32 @@
 
       function updateLiveMirrorControls() {
         const session = currentSession();
-        const enabled = Boolean(session && liveMirror.isEnabled(session.sessionId));
+        const mode = session ? liveMirror.getMode(session.sessionId) : null;
+        const enabled = mode === "mirror";
+        const participating = Boolean(session?.agentParticipation && mode === "participate");
         const canPost = bridgeReady || typeof window.openai?.sendFollowUpMessage === "function";
         $("#liveMirrorStatus").textContent = enabled
           ? "Live mirror is on for this room."
-          : "Live mirror is off for this room.";
+          : participating
+            ? "Agent Participation is active; Live Mirror is off."
+            : "Live mirror is off for this room.";
         $("#liveMirrorButton").textContent = enabled ? "Pause live mirror" : "Enable live mirror…";
-        $("#liveMirrorButton").disabled = busy || !session || (!enabled && !canPost);
-        $("#confirmLiveMirrorButton").disabled = busy || !$("#liveMirrorConsent").checked;
+        $("#liveMirrorButton").disabled = busy || !session || participating || (!enabled && !canPost);
+        $("#confirmLiveMirrorButton").disabled = busy || participating || !$("#liveMirrorConsent").checked;
+        updateAgentParticipationControls(session, mode, canPost);
+      }
+
+      function updateAgentParticipationControls(session = currentSession(), mode = session ? liveMirror.getMode(session.sessionId) : null, canPost = bridgeReady || typeof window.openai?.sendFollowUpMessage === "function") {
+        const enabled = Boolean(session?.agentParticipation && mode === "participate");
+        const liveMirroring = mode === "mirror";
+        $("#agentParticipationStatus").textContent = enabled
+          ? "Agent Participation is active for this room while this panel remains selected and open."
+          : liveMirroring
+            ? "Pause Live Mirror before enabling Agent Participation."
+            : "Agent Participation is off for this room.";
+        $("#agentParticipationButton").textContent = enabled ? "Pause Agent Participation" : "Enable Agent Participation…";
+        $("#agentParticipationButton").disabled = busy || !session || (!enabled && (liveMirroring || !canPost));
+        $("#confirmAgentParticipationButton").disabled = busy || liveMirroring || !$("#agentParticipationConsent").checked;
       }
 
       async function mirrorIncomingMessages(session) {
@@ -288,14 +331,19 @@
           const top = document.createElement("div");
           top.className = "message-top";
           const label = document.createElement("span");
-          const sender = message.direction === "outgoing" ? "You" : `Participant ${String(message.senderId || "").slice(0, 8)}`;
+          const messageType = String(message.messageType || "message");
+          const sender = message.direction === "outgoing"
+            ? messageType === "human" ? "You" : "Codex agent"
+            : `Participant ${String(message.senderId || "").slice(0, 8)}`;
+          const typeLabel = ({ human: "human", agent_ack: "ACK", agent_progress: "progress", agent_reply: "reply", receipt: "receipt" })[messageType] || "message";
           const time = message.receivedAt ? new Date(message.receivedAt).toLocaleString() : "";
           const recipientCount = Math.max(0, (session?.participants?.length || 1) - 1);
           const receiptCount = Array.isArray(message.acknowledgedBy) ? message.acknowledgedBy.length : (message.acknowledgedAt ? 1 : 0);
           const delivery = message.direction === "outgoing"
             ? ` · received by ${receiptCount}/${recipientCount} participant process${recipientCount === 1 ? "" : "es"}`
             : "";
-          label.textContent = `${sender}${time ? ` · ${time}` : ""}${delivery}`;
+          const replyTarget = message.inReplyTo ? ` · reply to ${String(message.inReplyTo).slice(0, 8)}` : "";
+          label.textContent = `${sender} · ${typeLabel}${time ? ` · ${time}` : ""}${replyTarget}${delivery}`;
           const selectLabel = document.createElement("label");
           const checkbox = document.createElement("input");
           checkbox.type = "checkbox";
@@ -316,7 +364,7 @@
         if (refreshPromise) return refreshPromise;
         const pendingRefresh = (async () => {
           const previousId = sessionSelect.value;
-          const result = await callTool("codex_link_panel_state", previousId ? { session_id: previousId } : {});
+          const result = await callTool("codex_link_panel_state", { ...(previousId ? { session_id: previousId } : {}), panel_instance_id: panelInstanceId });
           const meta = resultMeta(result);
           const sessions = meta.sessions;
           if (!Array.isArray(sessions)) {
@@ -327,6 +375,9 @@
             return;
           }
           activeSessions = sessions;
+          for (const session of activeSessions) {
+            if (!session.agentParticipation && liveMirror.getMode(session.sessionId) === "participate") liveMirror.disable(session.sessionId);
+          }
           sessionSelect.replaceChildren();
           for (const session of activeSessions) {
             const option = document.createElement("option");
@@ -417,11 +468,72 @@
       $("#confirmLiveMirrorButton").addEventListener("click", () => {
         const session = currentSession();
         if (!session || !$("#liveMirrorConsent").checked) return;
+        if (liveMirror.isEnabled(session.sessionId)) return;
         liveMirror.enable(session.sessionId, session.transcript || []);
         $("#liveMirrorConsent").checked = false;
         $("#liveMirrorConfirm").hidden = true;
         notice.textContent = "Live mirroring enabled for new messages in this room while the panel stays open.";
         updateLiveMirrorControls();
+      });
+
+      $("#agentParticipationButton").addEventListener("click", async () => {
+        const session = currentSession();
+        if (!session) return;
+        if (session.agentParticipation && liveMirror.getMode(session.sessionId) === "participate") {
+          setBusy(true);
+          try {
+            await callTool("codex_link_panel_set_agent_participation", {
+              session_id: session.sessionId,
+              panel_instance_id: panelInstanceId,
+              enabled: false,
+            });
+            liveMirror.disable(session.sessionId);
+            $("#agentParticipationConsent").checked = false;
+            $("#agentParticipationConfirm").hidden = true;
+            await refreshState();
+            notice.textContent = "Agent Participation paused for this room.";
+          } catch (error) { showError(error); }
+          finally { setBusy(false); }
+          return;
+        }
+        if (liveMirror.isEnabled(session.sessionId)) {
+          notice.textContent = "Pause Live Mirror before enabling Agent Participation.";
+          return;
+        }
+        if (!bridgeReady && typeof window.openai?.sendFollowUpMessage !== "function") {
+          notice.textContent = "This client cannot add messages from the panel to the chat.";
+          return;
+        }
+        $("#agentParticipationConsent").checked = false;
+        $("#agentParticipationConfirm").hidden = false;
+        updateAgentParticipationControls();
+      });
+
+      $("#agentParticipationConsent").addEventListener("change", updateAgentParticipationControls);
+      $("#cancelAgentParticipationButton").addEventListener("click", () => {
+        $("#agentParticipationConsent").checked = false;
+        $("#agentParticipationConfirm").hidden = true;
+        updateAgentParticipationControls();
+      });
+      $("#confirmAgentParticipationButton").addEventListener("click", async () => {
+        const session = currentSession();
+        if (!session || !$("#agentParticipationConsent").checked || liveMirror.isEnabled(session.sessionId)) return;
+        setBusy(true);
+        try {
+          await callTool("codex_link_panel_set_agent_participation", {
+            session_id: session.sessionId,
+            panel_instance_id: panelInstanceId,
+            enabled: true,
+          });
+          liveMirror.enable(session.sessionId, session.transcript || [], { mode: "participate", panelInstanceId });
+          $("#agentParticipationConsent").checked = false;
+          $("#agentParticipationConfirm").hidden = true;
+          await refreshState();
+          notice.textContent = "Agent Participation enabled for new human messages in this room while it remains selected and this panel renews consent.";
+        } catch (error) {
+          liveMirror.disable(session.sessionId);
+          showError(error);
+        } finally { setBusy(false); }
       });
 
       $("#createButton").addEventListener("click", async () => {
@@ -477,6 +589,8 @@
       sessionSelect.addEventListener("change", () => {
         $("#liveMirrorConfirm").hidden = true;
         $("#liveMirrorConsent").checked = false;
+        $("#agentParticipationConfirm").hidden = true;
+        $("#agentParticipationConsent").checked = false;
         void refreshState().catch(showError);
       });
 

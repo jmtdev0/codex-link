@@ -14,6 +14,14 @@ export const PROTOCOL_VERSION = 2;
 export const LEGACY_PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 8 * 1024;
 export const MAX_ROOM_PARTICIPANTS = 8;
+export const MESSAGE_TYPES = Object.freeze([
+  "message",
+  "human",
+  "agent_ack",
+  "agent_progress",
+  "agent_reply",
+  "receipt",
+]);
 
 const ROOM_ID_BYTES = 16;
 const SECRET_BYTES = 32;
@@ -142,11 +150,19 @@ function validateEnvelope(envelope, expectedRoomId) {
   return { ciphertext };
 }
 
-export function encryptMessage(invitation, senderId, text, identity) {
+export function encryptMessage(invitation, senderId, text, identity, options = {}) {
   if (typeof text !== "string" || text.trim().length === 0) {
     throw new Error("Message must be non-empty text.");
   }
-  const plaintext = Buffer.from(JSON.stringify({ type: "text", text }), "utf8");
+  const messageType = options.messageType ?? "message";
+  if (!MESSAGE_TYPES.includes(messageType)) throw new Error("Unsupported message type.");
+  const payload = { type: "text", text };
+  if (messageType !== "message") payload.messageType = messageType;
+  if (options.inReplyTo !== undefined) {
+    decode(options.inReplyTo, MESSAGE_ID_BYTES, "reply target message ID");
+    payload.inReplyTo = options.inReplyTo;
+  }
+  const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
   if (plaintext.length > MAX_MESSAGE_BYTES) throw new Error("Message exceeds the 8 KiB limit.");
 
   const envelope = {
@@ -174,7 +190,7 @@ export function encryptMessage(invitation, senderId, text, identity) {
   return envelope;
 }
 
-export function decryptMessage(invitation, envelope, seenMessageIds = new Set()) {
+export function decryptMessagePayload(invitation, envelope, seenMessageIds = new Set()) {
   const { ciphertext } = validateEnvelope(envelope, invitation.roomId);
   if (envelope.v !== invitation.version) throw new Error("Message protocol does not match the invitation.");
   if (seenMessageIds.has(envelope.messageId)) throw new Error("Replay rejected.");
@@ -217,9 +233,20 @@ export function decryptMessage(invitation, envelope, seenMessageIds = new Set())
   if (decoded?.type !== "text" || typeof decoded.text !== "string" || decoded.text.trim().length === 0) {
     throw new Error("Authenticated message payload has an unsupported format.");
   }
+  const messageType = decoded.messageType ?? "message";
+  if (!MESSAGE_TYPES.includes(messageType)) throw new Error("Authenticated message payload has an unsupported message type.");
+  if (decoded.inReplyTo !== undefined) decode(decoded.inReplyTo, MESSAGE_ID_BYTES, "reply target message ID");
   if (plaintext.length > MAX_MESSAGE_BYTES) throw new Error("Decrypted message is too large.");
 
   seenMessageIds.add(envelope.messageId);
   if (seenMessageIds.size > 4096) seenMessageIds.delete(seenMessageIds.values().next().value);
-  return decoded.text;
+  return {
+    text: decoded.text,
+    messageType,
+    ...(decoded.inReplyTo ? { inReplyTo: decoded.inReplyTo } : {}),
+  };
+}
+
+export function decryptMessage(invitation, envelope, seenMessageIds = new Set()) {
+  return decryptMessagePayload(invitation, envelope, seenMessageIds).text;
 }
