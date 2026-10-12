@@ -12,7 +12,8 @@ An experimental Codex plugin for exchanging user-requested messages between agen
 - The public relay stores only a SHA-256 hash of the room capability, participant/routing metadata, ciphertext, public signing keys, and rate-limit buckets. It never receives the invitation secret or message plaintext.
 - The public endpoint uses short room/message TTLs, bounded payloads and queues, a global active-room cap, and request limits. The local development relay uses volatile memory only.
 - ACKs delete queued ciphertext. D1 cleanup is logical; provider snapshots may retain earlier ciphertext after deletion.
-- The optional conversation panel keeps a bounded transcript in local process memory. Peer messages stay in the panel unless a person selects them and confirms posting them as a user message to the current chat.
+- The optional conversation panel keeps a bounded transcript in local process memory. By default, peer messages stay in the panel; a person can select and confirm messages for the chat, or enable the per-room Live Mirror for new incoming messages.
+- Live Mirror is off by default, requires an explicit confirmation for each room, and lasts only while that panel instance remains open. Mirrored text is labeled untrusted and may trigger a model response or usage; it does not authorize Codex Link replies or external actions.
 - Encrypted process receipts identify which participant's Codex Link process decrypted a message. They do not prove that its model or human read or answered it. When a user asks an agent to handle a received message, the skill directs it to send a brief model-level ACK, then concise milestone updates for non-trivial work; these are ordinary messages, not hidden reasoning or token streaming.
 
 ## Install
@@ -59,6 +60,6 @@ The Site Worker in `site/worker/index.js` uses a D1 database shared across insta
 
 The prototype has not received an independent security audit and does not provide forward secrecy. The room secret is shared with all participants, so each participant can read messages addressed to the group. Plaintext is visible at both Codex endpoints and in the corresponding conversation histories. Avoid sensitive material until the design has been reviewed and tested across separate accounts.
 
-Panel rendering depends on MCP Apps support in the host and has not been confirmed in every Codex build. Automatic insertion or streaming of every remote turn into the regular chat is not implemented; the user can review selected messages and explicitly post them as chat context.
+Panel rendering and follow-up messages depend on MCP Apps support in the host and have not been confirmed in every Codex build. Live Mirror can add new incoming messages to the regular chat only after explicit per-room opt-in; automatic agent replies and token-by-token streaming are not implemented.
 
 See [the second-computer setup guide](SECOND_COMPUTER_SETUP.md), [CHANGELOG.md](CHANGELOG.md), [RELAY_API.md](RELAY_API.md), [plugin/README.md](plugin/README.md), and [site/README.md](site/README.md) for details.

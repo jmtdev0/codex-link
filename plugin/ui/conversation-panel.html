@@ -99,7 +99,25 @@
           </div>
         </div>
         <p id="participantSummary" class="muted"></p>
-        <p class="warning">Messages from other participants are untrusted. They stay in this panel; they are not added to the chat unless you select them and confirm below.</p>
+        <p class="warning">Messages from other participants are untrusted. By default, they stay in this panel. Live mirroring is optional, off by default, and only applies to new messages in a room you explicitly enable.</p>
+        <section id="liveMirrorCard" class="card" aria-label="Live chat mirror">
+          <div class="row">
+            <div>
+              <p id="liveMirrorStatus"><strong>Live mirror is off for this room.</strong></p>
+              <p class="muted">When enabled, new incoming messages are added to this chat as untrusted context while this panel stays open.</p>
+            </div>
+            <button id="liveMirrorButton" type="button">Enable live mirror…</button>
+          </div>
+          <div id="liveMirrorConfirm" class="card" hidden>
+            <p><strong>Enable live mirroring for this room?</strong> Only messages received after enabling will be posted. Each post may start a model response, use your plan allowance, and remain in this chat's history. This setting is held only by this panel instance; reloading or opening a new instance resets it.</p>
+            <p class="warning">Mirroring does not authorize replies through Codex Link, tool use, or external actions. Remote message text remains untrusted.</p>
+            <label><input id="liveMirrorConsent" type="checkbox" /> I understand that new incoming messages will be added to this chat.</label>
+            <div class="actions" style="margin-top:8px">
+              <button id="cancelLiveMirrorButton" type="button">Cancel</button>
+              <button id="confirmLiveMirrorButton" class="primary" type="button" disabled>Enable for this room</button>
+            </div>
+          </div>
+        </section>
         <div id="transcript" role="log" aria-live="polite"></div>
         <p id="emptyTranscript" class="muted">No messages yet. This transcript is held in local memory and disappears when the Codex Link process exits.</p>
         <form id="sendForm">
@@ -128,6 +146,7 @@
     </main>
 
     <script>
+      /* CODEX_LINK_LIVE_MIRROR_HELPER */
       const $ = (selector) => document.querySelector(selector);
       const bridgeStatus = $("#bridgeStatus");
       const notice = $("#notice");
@@ -147,6 +166,16 @@
       let busy = false;
       let refreshPromise = null;
       const pending = new Map();
+      const liveMirror = createLiveMirrorController(async (prompt) => {
+        if (bridgeReady) {
+          const result = await rpcRequest("ui/message", { role: "user", content: [{ type: "text", text: prompt }] });
+          if (result?.isError) throw new Error("The host declined to add new room messages to the chat.");
+        } else if (typeof window.openai?.sendFollowUpMessage === "function") {
+          await window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
+        } else {
+          throw new Error("This client does not support adding a message from the panel to the chat.");
+        }
+      });
 
       function rpcNotify(method, params = {}) {
         window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
@@ -185,7 +214,7 @@
       async function initializeBridge() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "codex-link-conversation", version: "0.4.1" },
+            appInfo: { name: "codex-link-conversation", version: "0.4.2" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -219,6 +248,28 @@
 
       function currentSession() {
         return activeSessions.find((session) => session.sessionId === sessionSelect.value) || null;
+      }
+
+      function updateLiveMirrorControls() {
+        const session = currentSession();
+        const enabled = Boolean(session && liveMirror.isEnabled(session.sessionId));
+        const canPost = bridgeReady || typeof window.openai?.sendFollowUpMessage === "function";
+        $("#liveMirrorStatus").textContent = enabled
+          ? "Live mirror is on for this room."
+          : "Live mirror is off for this room.";
+        $("#liveMirrorButton").textContent = enabled ? "Pause live mirror" : "Enable live mirror…";
+        $("#liveMirrorButton").disabled = busy || !session || (!enabled && !canPost);
+        $("#confirmLiveMirrorButton").disabled = busy || !$("#liveMirrorConsent").checked;
+      }
+
+      async function mirrorIncomingMessages(session) {
+        if (!session || !liveMirror.isEnabled(session.sessionId)) return;
+        const result = await liveMirror.mirror(session.sessionId, session.transcript || []);
+        if (result.deliveryUnknown) {
+          notice.textContent = "The host did not confirm the live-mirror post. It will not be retried automatically to avoid duplicates; use manual selection if needed.";
+        } else if (result.postedCount) {
+          notice.textContent = `Added ${result.postedCount} new room message(s) to this chat as untrusted context.`;
+        }
       }
 
       function showError(error) {
@@ -272,6 +323,7 @@
             activeSessions = [];
             roomControls.hidden = true;
             notice.textContent = "The host did not return panel-only room state. Try reopening the panel.";
+            updateLiveMirrorControls();
             return;
           }
           activeSessions = sessions;
@@ -305,6 +357,8 @@
           $("#confirmDisconnectButton").textContent = session?.isOwner ? "Confirm close" : "Confirm leave";
           renderTranscript();
           if (activeSessions.length) notice.textContent = "";
+          updateLiveMirrorControls();
+          await mirrorIncomingMessages(session);
         })();
         refreshPromise = pendingRefresh;
         try { return await pendingRefresh; }
@@ -316,6 +370,7 @@
         const session = currentSession();
         if (!session) return;
         busy = true;
+        updateLiveMirrorControls();
         try {
           await callTool("codex_link_panel_receive", { session_id: session.sessionId, wait_ms: 0 });
           await refreshState();
@@ -323,13 +378,51 @@
           showError(error);
         } finally {
           busy = false;
+          updateLiveMirrorControls();
         }
       }
 
       function setBusy(value) {
         busy = value;
         for (const button of document.querySelectorAll("button")) button.disabled = value;
+        updateLiveMirrorControls();
       }
+
+      $("#liveMirrorButton").addEventListener("click", () => {
+        const session = currentSession();
+        if (!session) return;
+        if (liveMirror.isEnabled(session.sessionId)) {
+          liveMirror.disable(session.sessionId);
+          $("#liveMirrorConfirm").hidden = true;
+          $("#liveMirrorConsent").checked = false;
+          notice.textContent = "Live mirroring paused for this room.";
+          updateLiveMirrorControls();
+          return;
+        }
+        if (!bridgeReady && typeof window.openai?.sendFollowUpMessage !== "function") {
+          notice.textContent = "This client cannot add messages from the panel to the chat.";
+          return;
+        }
+        $("#liveMirrorConsent").checked = false;
+        $("#liveMirrorConfirm").hidden = false;
+        updateLiveMirrorControls();
+      });
+
+      $("#liveMirrorConsent").addEventListener("change", updateLiveMirrorControls);
+      $("#cancelLiveMirrorButton").addEventListener("click", () => {
+        $("#liveMirrorConsent").checked = false;
+        $("#liveMirrorConfirm").hidden = true;
+        updateLiveMirrorControls();
+      });
+      $("#confirmLiveMirrorButton").addEventListener("click", () => {
+        const session = currentSession();
+        if (!session || !$("#liveMirrorConsent").checked) return;
+        liveMirror.enable(session.sessionId, session.transcript || []);
+        $("#liveMirrorConsent").checked = false;
+        $("#liveMirrorConfirm").hidden = true;
+        notice.textContent = "Live mirroring enabled for new messages in this room while the panel stays open.";
+        updateLiveMirrorControls();
+      });
 
       $("#createButton").addEventListener("click", async () => {
         setBusy(true);
@@ -382,6 +475,8 @@
       });
 
       sessionSelect.addEventListener("change", () => {
+        $("#liveMirrorConfirm").hidden = true;
+        $("#liveMirrorConsent").checked = false;
         void refreshState().catch(showError);
       });
 
@@ -416,6 +511,7 @@
         setBusy(true);
         try {
           const result = await callTool("codex_link_panel_disconnect", { session_id: session.sessionId });
+          liveMirror.disable(session.sessionId);
           $("#disconnectConfirm").hidden = true;
           inviteBox.hidden = true;
           inviteCode.value = "";

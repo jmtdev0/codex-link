@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.2 — Explicit live chat mirroring
+
+- Add an opt-in, per-room Live Mirror that posts only new incoming messages into the active chat while the panel remains open.
+- Keep the feature disabled by default; require a second explicit confirmation, show usage/history implications, and keep its setting in the current panel instance only.
+- Label mirrored content as untrusted and do not authorize Codex Link replies, tool use, or external actions. Do not automatically retry host posts whose outcome is ambiguous.
+- Keep the existing manual select-and-confirm path available; do not change relay storage or protocol behavior.
+- Add unit coverage for opt-in, initial-message skipping, deduplication, room isolation, and ambiguous host failures.
+
 ## 0.4.1 — Agent acknowledgements and progress
 
 - Clarify the agent workflow: when a user asks Codex to handle a received peer message, send the peer a brief ACK promptly, then useful milestone updates for non-trivial work; do not send hidden reasoning or ETAs by default.

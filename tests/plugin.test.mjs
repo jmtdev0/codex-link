@@ -81,12 +81,12 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   for (const client of [alice, bob, charlie]) {
     const initialized = await client.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
     assert.equal(initialized.serverInfo.name, "codex-link");
-    assert.equal(initialized.serverInfo.version, "0.4.1");
+    assert.equal(initialized.serverInfo.version, "0.4.2");
   }
   const listed = await alice.rpc("tools/list");
   assert.equal(listed.tools.length, 13);
   const panelTool = listed.tools.find((tool) => tool.name === "codex_link_open_panel");
-  assert.equal(panelTool._meta.ui.resourceUri, "ui://codex-link/conversation-panel-v0.4.1.html");
+  assert.equal(panelTool._meta.ui.resourceUri, "ui://codex-link/conversation-panel-v0.4.2.html");
   const panelTools = listed.tools.filter((tool) => tool.name.startsWith("codex_link_panel_"));
   assert.equal(panelTools.length, 6);
   for (const tool of panelTools) {
@@ -99,6 +99,13 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   const panelResource = await alice.rpc("resources/read", { uri: panelTool._meta.ui.resourceUri });
   assert.equal(panelResource.contents[0].mimeType, "text/html;profile=mcp-app");
   assert.match(panelResource.contents[0].text, /Confirm and post to chat/);
+  assert.match(panelResource.contents[0].text, /Enable live mirror/);
+  assert.match(panelResource.contents[0].text, /only applies to new messages/);
+  assert.match(panelResource.contents[0].text, /function createLiveMirrorController/);
+  assert.match(panelResource.contents[0].text, /human explicitly enabled live mirroring/);
+  const panelScript = panelResource.contents[0].text.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(panelScript, "the panel should contain its inline script");
+  assert.doesNotThrow(() => new Function(panelScript), "the injected panel script should parse");
   assert.match(panelResource.contents[0].text, /body\.textContent = String\(message\.text/);
   assert.doesNotMatch(panelResource.contents[0].text, /body\.innerHTML\s*=/);
 

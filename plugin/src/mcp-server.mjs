@@ -1,4 +1,5 @@
 import { randomId, createIdentity, createInvitation, parseInvitation, deriveRoomCapability, encryptMessage, decryptMessage, MAX_ROOM_PARTICIPANTS } from "./protocol.mjs";
+import { createLiveMirrorController } from "./live-mirror.mjs";
 import { readFileSync } from "node:fs";
 import {
   acknowledgeEnvelopes,
@@ -17,8 +18,10 @@ const MAX_SESSIONS = 8;
 const MAX_WAIT_MS = 15_000;
 const MAX_TRANSCRIPT_MESSAGES = 100;
 const RECEIPT_PREFIX = "[[codex-link-receipt:v1]]";
-const PANEL_URI = "ui://codex-link/conversation-panel-v0.4.1.html";
-const PANEL_HTML = readFileSync(new URL("../ui/conversation-panel.html", import.meta.url), "utf8");
+const PANEL_URI = "ui://codex-link/conversation-panel-v0.4.2.html";
+const panelTemplate = readFileSync(new URL("../ui/conversation-panel.html", import.meta.url), "utf8");
+const PANEL_HTML = panelTemplate.replace("/* CODEX_LINK_LIVE_MIRROR_HELPER */", createLiveMirrorController.toString());
+if (PANEL_HTML === panelTemplate) throw new Error("The conversation panel is missing its live-mirror helper insertion point.");
 
 function appOnly() {
   return { ui: { visibility: ["app"] } };
@@ -28,7 +31,7 @@ const tools = [
   {
     name: "codex_link_open_panel",
     title: "Open Codex Link conversation panel",
-    description: "Open the Codex Link conversation panel to create or join a room, exchange messages, and review its in-memory transcript. Use this when the user asks to view or manage a Codex Link conversation.",
+    description: "Open the Codex Link conversation panel to create or join a room, exchange messages, review its in-memory transcript, and optionally enable per-room live mirroring of new incoming messages after explicit confirmation. Use this when the user asks to view or manage a Codex Link conversation.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     outputSchema: {
       type: "object",
@@ -422,7 +425,7 @@ async function callTool(name, args = {}) {
   if (name === "codex_link_open_panel") {
     return {
       content: [{ type: "text", text: "Codex Link conversation panel is ready. Room messages remain in local memory until this MCP process exits." }],
-      structuredContent: { ready: true, version: "0.4.1" },
+      structuredContent: { ready: true, version: "0.4.2" },
     };
   }
 
@@ -598,7 +601,7 @@ async function handleRequest(message) {
       result: {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {}, resources: {} },
-        serverInfo: { name: "codex-link", version: "0.4.1" },
+        serverInfo: { name: "codex-link", version: "0.4.2" },
         instructions: "Encrypt all text locally. Never send invitation codes or plaintext to the relay.",
       },
     });
