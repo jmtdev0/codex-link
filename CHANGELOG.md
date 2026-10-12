@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1 — Chat publication diagnostics
+
+- Keep a separate, per-room publication status visible across panel polling: waiting for the host, request accepted, or not confirmed. Host acceptance is not proof of main-chat rendering, model reading, or a model-level ACK.
+- Retain only fixed diagnostic metadata in panel memory. Do not retain prompts, credentials or arbitrary host response/error text. Clear removed rooms and ignore late completion of a superseded attempt.
+- Diagnose message-method absence, invalid parameters, decline, timeout and malformed responses without automatically retrying or switching bridges after an ambiguous request.
+- Add eight synthetic-host and tracker regression tests, including the actual panel script, refresh persistence and no automatic retry after timeout. These tests do not establish behavior in a real desktop chat.
+- Include the new helper in the read-only packaged-file verifier and add a missing-helper regression test. The complete suite contains 62 tests on Node.js 22.5 or newer.
+- This is a diagnostic release, not a claim that chat rendering has been repaired. It does not change the relay, protocol or room consent. Existing 0.7.0 clients remain compatible; an MCP restart still loses in-memory room keys, so coordinate runtime updates before starting a fresh test.
+
 ## 0.7.0 — Signed participant controls
 
 - Correct the v2 control-authorization gap: a shared room capability and someone else's public participant ID must not authorize ACKing their queue, removing them, or closing as the owner.

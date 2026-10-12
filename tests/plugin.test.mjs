@@ -121,6 +121,9 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   assert.match(panelResource.contents[0].text, /does not sandbox the model's other tools/);
   assert.match(panelResource.contents[0].text, /only applies to new messages/);
   assert.match(panelResource.contents[0].text, /function createLiveMirrorController/);
+  assert.match(panelResource.contents[0].text, /function createChatPostStatusTracker/);
+  assert.match(panelResource.contents[0].text, /id="chatPostStatus"/);
+  assert.match(panelResource.contents[0].text, /Appearance in the main chat is not verified/);
   assert.match(panelResource.contents[0].text, /selectedPost = liveMirror\.formatSelectedMessagesForChat\(selected\)/);
   assert.match(panelResource.contents[0].text, /liveMirror\.synchronizeSessions\(activeSessions\.map/);
   assert.match(panelResource.contents[0].text, /human explicitly enabled live mirroring/);

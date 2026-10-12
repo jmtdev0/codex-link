@@ -29,7 +29,7 @@ async function fixture(t) {
   return cachedRoot;
 }
 
-test('cache checker verifies all eight files without modifying or disclosing the installed copy', async t => {
+test('cache checker verifies all nine files without modifying or disclosing the installed copy', async t => {
   const cachedRoot = await fixture(t);
   const before = await Promise.all(PACKAGED_FILES.map(async relativeFile => ({
     bytes: await readFile(path.join(cachedRoot, relativeFile)),
@@ -37,7 +37,7 @@ test('cache checker verifies all eight files without modifying or disclosing the
   })));
   const result = await verifyPluginCache(cachedRoot);
   assert.equal(result.ok, true);
-  assert.equal(result.files.length, 8);
+  assert.equal(result.files.length, 9);
   assert.equal(result.expectedVersion, result.cachedVersion);
   assert.ok(result.files.every(file => file.matches));
   assert.match(result.scope, /active MCP version separately/);
@@ -73,7 +73,16 @@ test('cache diagnostics never echo arbitrary manifest values or local configurat
   assert.equal(result.ok, false);
   assert.equal(result.cachedVersion, null);
   assert.equal(JSON.stringify(result).includes(privateCanary), false);
-  assert.equal(result.files.length, 8);
+  assert.equal(result.files.length, 9);
+});
+
+test('cache checker catches a missing publication-status helper even with matching version metadata', async t => {
+  const cachedRoot = await fixture(t);
+  await unlink(path.join(cachedRoot, 'src/chat-post-status.mjs'));
+  const result = await verifyPluginCache(cachedRoot);
+  assert.equal(result.expectedVersion, result.cachedVersion);
+  assert.equal(result.ok, false);
+  assert.equal(result.files.find(file => file.file === 'src/chat-post-status.mjs').cachedStatus, 'missing');
 });
 
 test('cache CLI has explicit success, mismatch and invalid-input exit statuses', async t => {

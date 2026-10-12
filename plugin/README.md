@@ -18,6 +18,8 @@ The packaged plugin uses the configured Codex Link relay URL by default. Set `CO
 
 ## Security notes
 
+Version 0.7.1 adds a separate **Chat publication** status that survives transcript polling. Waiting, host-accepted and unconfirmed states describe only the most recent attempt in the selected room and panel instance. They do not establish main-chat visibility or model reading. Check the main conversation separately. The tracker retains only fixed diagnostic metadata in panel memory, is cleared for removed rooms, and never automatically retries a timeout or other ambiguous result. Opening another card resets this diagnostic and the panel's opt-in state; do not reload an active card just to retry a message.
+
 - Version 0.7.0 uses the same in-memory Ed25519 identity to sign v2 create/join/ACK/leave/close requests. The updated relay rejects older unsigned controls; upgrade each participant. The proof binds the action, room, actor, operation data, timestamp, and nonce. It is not a one-time replay ledger and must not be put in messages, logs, or public output. See [the relay contract](../RELAY_API.md) for freshness and threat-model limits. No extra guest token or private-key file is needed.
 - The room code is a bearer credential. Anyone who obtains it can join and derive the shared room encryption key until the room fills or expires; there is no per-member revocation.
 - The relay stores a capability hash, participant IDs, public signing keys, ciphertext, and limited rate-limit metadata. It does not receive private signing keys, the room secret, or message plaintext.

@@ -134,7 +134,7 @@ export function createLiveMirrorController(sendFollowUpMessage) {
         const prompt = state.mode === "participate"
           ? formatParticipationPrompt(id, state.panelInstanceId, candidates)
           : formatPrompt(candidates);
-        await sendFollowUpMessage(prompt);
+        await sendFollowUpMessage(prompt, { sessionId: id, mode: state.mode });
         return { postedCount: candidates.length, messageIds };
       } catch (error) {
         return { postedCount: 0, messageIds, deliveryUnknown: true, error };

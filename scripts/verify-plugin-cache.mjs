@@ -8,7 +8,7 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024;
 export const PACKAGED_FILES = Object.freeze([
   '.codex-plugin/plugin.json', '.mcp.json',
   'src/mcp-server.mjs', 'src/protocol.mjs', 'src/relay-client.mjs',
-  'src/live-mirror.mjs', 'ui/conversation-panel.html',
+  'src/live-mirror.mjs', 'src/chat-post-status.mjs', 'ui/conversation-panel.html',
   'skills/codex-link/SKILL.md',
 ]);
 
@@ -83,7 +83,7 @@ const invokedDirectly = process.argv[1]
 if (invokedDirectly) {
   const args = process.argv.slice(2);
   const usage = 'Usage: node scripts/verify-plugin-cache.mjs --cached-root "ABSOLUTE_INSTALLED_PATH"\n'
-    + 'Read-only: checks eight packaged files, without printing contents or private paths.\n'
+    + `Read-only: checks ${PACKAGED_FILES.length} packaged files, without printing contents or private paths.\n`
     + 'A match does not establish which files the running MCP loaded.\n';
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) {
     process.stdout.write(usage);

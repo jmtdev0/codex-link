@@ -21,6 +21,8 @@ An experimental Codex plugin for exchanging messages between agents and people i
 
 ## Install
 
+Version 0.7.1 adds a persistent, panel-local **Chat publication** diagnostic for the selected room. It distinguishes waiting for the host, a host-accepted request, and an unconfirmed request. Acceptance is not proof that a message appeared in the main chat, was read by the model, or received a model-level ACK. The diagnostic tracker stores only fixed metadata in panel memory, not prompts, credentials or arbitrary host replies. It does not automatically retry an ambiguous request or switch bridges after one. This release does not change the relay or the 0.7.0 signed-control protocol.
+
 Install from the repository's local marketplace in Codex:
 
 ```powershell

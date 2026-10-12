@@ -13,7 +13,7 @@ codex plugin marketplace add .
 codex plugin add codex-link@codex-link-local
 ```
 
-If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Verify that both the installed plugin and active MCP report version 0.7.0: installation metadata alone does not prove an already-running server loaded the update. Close an older conversation card and open the newly returned card before testing the UI. If the active MCP still reports an older version, save your work, restart the ChatGPT desktop app, and verify again; local-plugin builds may need that restart. Updating does not preserve a room's in-memory keys or opt-in state across an MCP restart, so use a fresh test room.
+If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Verify that both the installed plugin and active MCP report version 0.7.1: installation metadata alone does not prove an already-running server loaded the update. Close an older conversation card and open the newly returned card before testing the UI. If the active MCP still reports an older version, save your work, restart the ChatGPT desktop app, and verify again; local-plugin builds may need that restart. Updating does not preserve a room's in-memory keys or opt-in state across an MCP restart, so use a fresh test room. Coordinate an update before restarting an active test: 0.7.0 remains compatible with the relay, and a diagnostic release does not require terminating an existing room immediately.
 
 ### Choose the update route for the configured source
 
@@ -50,7 +50,7 @@ If the registered source is a copy without Git metadata, has local edits, uses a
 
 The desktop can run an older MCP even when the plugin list shows the new source version. Official [packaging guidance](https://developers.openai.com/plugins/build/plugins) describes the cached install and local-app reload; the [CLI reference](https://learn.chatgpt.com/docs/cli/reference) documents `installedPath` in a successful `plugin add --json` result. Use the actual cache path from that result or your runtime's plugin context; do not assume a version-named folder is the loaded copy.
 
-From this repository, a read-only helper compares eight packaged files by SHA-256 without printing their contents, private paths or configuration values:
+From this repository, a read-only helper compares nine packaged files by SHA-256 without printing their contents, private paths or configuration values:
 
 ```powershell
 node scripts/verify-plugin-cache.mjs --cached-root 'ABSOLUTE_INSTALLED_PATH'

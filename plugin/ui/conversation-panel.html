@@ -144,6 +144,7 @@
             </div>
           </div>
         </section>
+        <p id="chatPostStatus" class="notice" role="status">Chat publication: no attempt observed in this panel for this room yet.</p>
         <div id="transcript" role="log" aria-live="polite"></div>
         <p id="emptyTranscript" class="muted">No messages yet. This transcript is held in local memory and disappears when the Codex Link process exits.</p>
         <form id="sendForm">
@@ -173,6 +174,7 @@
 
     <script>
       /* CODEX_LINK_LIVE_MIRROR_HELPER */
+      /* CODEX_LINK_CHAT_POST_STATUS_HELPER */
       const $ = (selector) => document.querySelector(selector);
       const bridgeStatus = $("#bridgeStatus");
       const notice = $("#notice");
@@ -200,16 +202,35 @@
         return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
       }
       const panelInstanceId = createPanelInstanceId();
-      const liveMirror = createLiveMirrorController(async (prompt) => {
-        if (bridgeReady) {
-          const result = await rpcRequest("ui/message", { role: "user", content: [{ type: "text", text: prompt }] });
-          if (result?.isError) throw new Error("The host declined to add new room messages to the chat.");
-        } else if (typeof window.openai?.sendFollowUpMessage === "function") {
-          await window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
-        } else {
-          throw new Error("This client does not support adding a message from the panel to the chat.");
+      const chatPostStatus = createChatPostStatusTracker();
+      const liveMirror = createLiveMirrorController((prompt, context) => postMessagesToChat(prompt, context.sessionId, context.mode));
+
+      function renderChatPostStatus() {
+        $("#chatPostStatus").textContent = chatPostStatus.describe(currentSession()?.sessionId);
+      }
+
+      async function postMessagesToChat(prompt, sessionId, source) {
+        const channel = bridgeReady ? "ui/message"
+          : typeof window.openai?.sendFollowUpMessage === "function" ? "compatibility" : "unsupported";
+        const attempt = chatPostStatus.begin(sessionId, { source, channel });
+        renderChatPostStatus();
+        try {
+          if (channel === "ui/message") {
+            const result = await rpcRequest("ui/message", { role: "user", content: [{ type: "text", text: prompt }] });
+            if (result?.isError) throw Object.assign(new Error("The host declined the chat publication request."), { kind: "declined" });
+          } else if (channel === "compatibility") {
+            await window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
+          } else {
+            throw Object.assign(new Error("This client does not support adding a message from the panel to the chat."), { kind: "unsupported" });
+          }
+          chatPostStatus.finish(attempt);
+        } catch (error) {
+          chatPostStatus.finish(attempt, error);
+          throw error;
+        } finally {
+          renderChatPostStatus();
         }
-      });
+      }
 
       function rpcNotify(method, params = {}) {
         window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
@@ -220,7 +241,7 @@
           const id = ++nextId;
           const timer = setTimeout(() => {
             pending.delete(id);
-            reject(new Error(`Host request timed out: ${method}`));
+            reject(Object.assign(new Error(`Host request timed out: ${method}`), { kind: "timeout" }));
           }, 12000);
           pending.set(id, { resolve, reject, timer });
           window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
@@ -236,7 +257,8 @@
           if (!request) return;
           pending.delete(message.id);
           clearTimeout(request.timer);
-          if (message.error) request.reject(new Error(message.error.message || "Host request failed"));
+          if (message.error) request.reject(Object.assign(new Error(message.error.message || "Host request failed"), { code: message.error.code }));
+          else if (!Object.prototype.hasOwnProperty.call(message, "result")) request.reject(Object.assign(new Error("Host response is missing its result."), { kind: "malformed" }));
           else request.resolve(message.result);
           return;
         }
@@ -248,7 +270,7 @@
       async function initializeBridge() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "codex-link-conversation", version: "0.7.0" },
+            appInfo: { name: "codex-link-conversation", version: "0.7.1" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -300,6 +322,7 @@
         $("#confirmLiveMirrorButton").disabled = busy || participating || !$("#liveMirrorConsent").checked;
         updateAgentParticipationControls(session, mode, canPost);
         updateDisplayNameControls(session);
+        renderChatPostStatus();
       }
 
       function updateDisplayNameControls(session = currentSession()) {
@@ -327,7 +350,7 @@
         if (result.deliveryUnknown) {
           notice.textContent = "The host did not confirm the live-mirror post. It will not be retried automatically to avoid duplicates; use manual selection if needed.";
         } else if (result.postedCount) {
-          notice.textContent = `Added ${result.postedCount} new room message(s) to this chat as untrusted context.`;
+          notice.textContent = `The host accepted a request for ${result.postedCount} new room message(s). Check the main chat; visibility is not verified.`;
         }
       }
 
@@ -395,6 +418,7 @@
             return;
           }
           activeSessions = sessions;
+          chatPostStatus.synchronizeSessions(activeSessions.map((session) => session.sessionId));
           liveMirror.synchronizeSessions(activeSessions.map((session) => session.sessionId));
           if (invitationSessionId && !activeSessions.some((session) => session.sessionId === invitationSessionId)) {
             invitationSessionId = "";
@@ -741,19 +765,14 @@
         if (!selectedPost) return;
         setBusy(true);
         try {
-          if (bridgeReady) {
-            const result = await rpcRequest("ui/message", { role: "user", content: [{ type: "text", text: selectedPost }] });
-            if (result?.isError) throw new Error("The host declined to add the selected messages to the chat.");
-          } else if (typeof window.openai?.sendFollowUpMessage === "function") {
-            await window.openai.sendFollowUpMessage({ prompt: selectedPost, scrollToBottom: true });
-          } else {
-            throw new Error("This client does not support adding a message from the panel to the chat.");
-          }
+          const session = currentSession();
+          if (!session) return;
+          await postMessagesToChat(selectedPost, session.sessionId, "manual");
           selectedPost = "";
           confirmPreview.textContent = "";
           confirmBox.hidden = true;
           for (const checkbox of transcriptEl.querySelectorAll('input[type="checkbox"]')) checkbox.checked = false;
-          notice.textContent = "Selected messages were posted as a user message to the chat.";
+          notice.textContent = "The host accepted the selected-message request. Check the main chat; visibility is not verified.";
         } catch (error) { showError(error); }
         finally { setBusy(false); }
       });
