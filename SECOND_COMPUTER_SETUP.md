@@ -46,6 +46,20 @@ codex plugin list --json
 
 If the registered source is a copy without Git metadata, has local edits, uses a different branch/remote, or the installed CLI does not support these commands, stop and ask the local user to choose a safe update route. Do not reset files, switch marketplace types, uninstall the plugin, force-delete an in-use cache, change permissions, or restart the desktop app merely to make the command succeed. An access-denied cache-backup warning leaves the installed and active versions requiring independent verification.
 
+### Check the installed copy after an incomplete refresh
+
+The desktop can run an older MCP even when the plugin list shows the new source version. Official [packaging guidance](https://developers.openai.com/plugins/build/plugins) describes the cached install and local-app reload; the [CLI reference](https://learn.chatgpt.com/docs/cli/reference) documents `installedPath` in a successful `plugin add --json` result. Use the actual cache path from that result or your runtime's plugin context; do not assume a version-named folder is the loaded copy.
+
+From this repository, a read-only helper compares eight packaged files by SHA-256 without printing their contents, private paths or configuration values:
+
+```powershell
+node scripts/verify-plugin-cache.mjs --cached-root 'ABSOLUTE_INSTALLED_PATH'
+```
+
+Replace the placeholder with the actual installed-cache path, not the source `plugin/` folder. Exit `0` means those files match the checkout; `1` reports missing/mismatched files or metadata; `2` means the check could not complete. The helper does not establish which files the running server loaded, authenticate a room, or repair permissions.
+
+If the files match but the active MCP is old, save work and let the local human restart the desktop app, then verify `codex_link_open_panel` and a newly expanded card. If the cache is incomplete or mismatched, use the supported install flow under the same user/Codex home as the desktop, through normal permission approvals; do not claim a restart repaired it. Keep account-authentication files, room keys, transcripts and environment values out of diagnostic reports.
+
 Version 0.7.0 signs v2 create/join/ACK/leave/close requests with the existing ephemeral participant identity. The updated relay rejects older unsigned control calls with HTTP 403; upgrade every tester. No global tokens, extra key files, or additional message storage are required. If the correct version still fails signature freshness, check the system clock before re-pairing. Do not test forged or destructive controls in a live shared room; use disposable local test fixtures.
 
 The guest needs only the plugin and a room code. Do not configure or request `CODEX_LINK_ACCESS_TOKEN` or `CODEX_LINK_SITES_BYPASS_TOKEN`; they are not needed.
