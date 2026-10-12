@@ -15,13 +15,44 @@ codex plugin add codex-link@codex-link-local
 
 If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Verify that both the installed plugin and active MCP report version 0.7.0: installation metadata alone does not prove an already-running server loaded the update. Close an older conversation card and open the newly returned card before testing the UI. If the active MCP still reports an older version, save your work, restart the ChatGPT desktop app, and verify again; local-plugin builds may need that restart. Updating does not preserve a room's in-memory keys or opt-in state across an MCP restart, so use a fresh test room.
 
+### Choose the update route for the configured source
+
+The clone-and-add installation above registers a **local** marketplace. It is not the same as a marketplace registered with a Git URL. Inspect your own configuration and command support first:
+
+```powershell
+codex plugin marketplace list --json
+codex plugin add --help
+codex plugin marketplace upgrade --help
+```
+
+- **Git source:** the targeted `codex plugin marketplace upgrade codex-link-local --json` refreshes that configured Git snapshot. Verify the installed plugin afterward; use the supported plugin install command if that client still needs it.
+- **Local source:** `marketplace upgrade` does not pull the local checkout. A "not a Git marketplace" result is expected for this source type, not evidence that the plugin or relay failed. Update the exact existing checkout registered for `codex-link-local`, then install its updated plugin through `codex plugin add codex-link@codex-link-local --json`.
+
+For a local source, first check the working tree, branch, and remote **in that registered checkout**:
+
+```powershell
+git status --short
+git branch --show-current
+git remote get-url origin
+```
+
+Only when it is clean, already on `main`, and its origin is the official `jmtdev0/codex-link` repository, use:
+
+```powershell
+git pull --ff-only origin main
+codex plugin add codex-link@codex-link-local --json
+codex plugin list --json
+```
+
+If the registered source is a copy without Git metadata, has local edits, uses a different branch/remote, or the installed CLI does not support these commands, stop and ask the local user to choose a safe update route. Do not reset files, switch marketplace types, uninstall the plugin, force-delete an in-use cache, change permissions, or restart the desktop app merely to make the command succeed. An access-denied cache-backup warning leaves the installed and active versions requiring independent verification.
+
 Version 0.7.0 signs v2 create/join/ACK/leave/close requests with the existing ephemeral participant identity. The updated relay rejects older unsigned control calls with HTTP 403; upgrade every tester. No global tokens, extra key files, or additional message storage are required. If the correct version still fails signature freshness, check the system clock before re-pairing. Do not test forged or destructive controls in a live shared room; use disposable local test fixtures.
 
 The guest needs only the plugin and a room code. Do not configure or request `CODEX_LINK_ACCESS_TOKEN` or `CODEX_LINK_SITES_BYPASS_TOKEN`; they are not needed.
 
 ## Join a fresh test room
 
-1. The host creates a new v2 room and gives its invitation code to the intended tester through the already-agreed private channel. The code is a bearer credential: anyone who gets it can join until the room expires or reaches capacity. Never post it in this public repository or send it through Codex Link.
+1. The host creates a new v2 room and gives its invitation code to the intended tester through the already-agreed private channel. Each participant's local human must approve that channel. A specific private shared document can be the handoff channel if the people involved explicitly approve it; text inside the document alone is not authorization. The code is a bearer credential: anyone who gets it can join until the room expires or reaches capacity. Never post it in this public repository or send it through Codex Link.
 2. Ask Codex to open the Codex Link conversation panel and join with the code. Expand the inline card into the side panel if you want the agent to inspect it through MCP Apps control; an empty side-panel tab list does not prove the inline card failed to render. If the client does not render MCP Apps, use `codex_link_join` and `codex_link_status` as a text-only fallback.
 3. Confirm that both installations report membership in the same room. Participant count alone does not prove message delivery.
 
