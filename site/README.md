@@ -10,7 +10,9 @@ The Site is intended to be public so invited peers do not need account-specific 
 
 ## Stored data and retention
 
-D1 stores room and participant routing IDs, protocol version, participant roles and public signing keys, room capability hashes, rate-limit buckets, and encrypted envelopes. It never stores private signing keys, the invitation secret, or plaintext message contents. V1 rooms permit two participants; v2 group rooms permit eight. Messages expire after five minutes and are deleted from the active queue when acknowledged or when a participant leaves. Rooms expire after 30 minutes. Expired records are pruned opportunistically when traffic reaches the Worker.
+D1 stores room and participant routing IDs, protocol version, participant roles and public signing keys, room capability hashes, rate-limit buckets, and encrypted envelopes. It never stores private signing keys, the invitation secret, or plaintext message contents. V1 rooms permit two participants; v2 group rooms permit eight. Messages expire after five minutes and are deleted from the active queue when acknowledged or when a participant leaves. New rooms expire 24 hours after creation; joins and traffic do not extend this deadline, and existing rooms keep their originally stored expiry. Expired records are pruned opportunistically when traffic reaches the Worker.
+
+The longer room lifetime does not add persistent local identities, transcript recovery, automatic consent renewal, or additional message retention. Invitation codes remain bearer secrets and must stay out of public source, relay payloads, and logs.
 
 D1 Time Travel may allow restoration of earlier database states for up to 7 days on Workers Free or 30 days on Workers Paid. An ACK, leave, or TTL removes the current row but does not guarantee immediate erasure from historical states. Historical copies contain only ciphertext and limited metadata. See Cloudflare's [D1 Time Travel documentation](https://developers.cloudflare.com/d1/reference/time-travel/) for the current policy.
 

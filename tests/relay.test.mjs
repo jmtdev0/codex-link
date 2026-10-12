@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   acknowledgeEnvelopes,
   createRoom,
+  getRoomStatus,
   joinRoom,
   receiveEnvelopes,
   sendEnvelope,
@@ -38,6 +39,43 @@ test("two participants exchange only ciphertext through the volatile relay", asy
   assert.equal((await receiveEnvelopes(baseUrl, invitation.roomId, bob, capability)).messages.length, 0);
 
   assert.equal([...relay.rooms.values()][0].queues.get(bob).size, 0);
+});
+
+test("default development rooms expire exactly 24 hours after creation without renewing on traffic", async (t) => {
+  const createdAt = Date.now();
+  let simulatedNow = createdAt;
+  t.mock.method(Date, "now", () => simulatedNow);
+  const roomTtlMs = 24 * 60 * 60 * 1000;
+  const relay = createRelayServer({ port: 0 });
+  const address = await relay.listen();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  t.after(() => relay.close());
+  const invitation = createInvitation();
+  const capability = deriveRoomCapability(invitation);
+  const [owner, peer] = Array.from({ length: 2 }, () => createIdentity());
+  const created = await createRoom(baseUrl, invitation.roomId, owner.participantId, capability, {
+    protocolVersion: 2, publicKey: owner.publicKey,
+  });
+  const deadline = new Date(createdAt + roomTtlMs).toISOString();
+  assert.equal(created.expiresAt, deadline);
+  simulatedNow += 31 * 60 * 1000;
+  const joined = await joinRoom(baseUrl, invitation.roomId, peer.participantId, capability, {
+    protocolVersion: 2, publicKey: peer.publicKey,
+  });
+  assert.equal(joined.expiresAt, deadline);
+  await sendEnvelope(baseUrl, encryptMessage(invitation, owner.participantId, "temporary", owner), capability);
+  const item = [...relay.rooms.get(invitation.roomId).queues.get(peer.participantId).values()][0];
+  assert.equal(item.expiresAt, simulatedNow + 5 * 60 * 1000);
+  simulatedNow += 5 * 60 * 1000;
+  assert.deepEqual((await receiveEnvelopes(baseUrl, invitation.roomId, peer.participantId, capability)).messages, []);
+  simulatedNow = createdAt + roomTtlMs - 1;
+  assert.equal((await getRoomStatus(baseUrl, invitation.roomId, owner.participantId, capability)).expiresAt, deadline);
+  simulatedNow += 1;
+  await assert.rejects(getRoomStatus(baseUrl, invitation.roomId, owner.participantId, capability), /not found or expired/i);
+  await assert.rejects(joinRoom(baseUrl, invitation.roomId, peer.participantId, capability, {
+    protocolVersion: 2, publicKey: peer.publicKey,
+  }), /not found or expired/i);
+  assert.equal(relay.rooms.size, 0);
 });
 
 test("the relay rejects a third participant and does not log or persist messages", async (t) => {

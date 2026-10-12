@@ -29,7 +29,7 @@ The v2 room code is a reusable bearer credential: anyone holding it can join unt
 
 ## Bounds and retention
 
-- Room TTL is 30 minutes; message TTL is 5 minutes; each recipient queue is limited to 100 envelopes; HTTP bodies are limited to 24 KiB.
+- New rooms have an absolute TTL of 24 hours from creation; joining or traffic does not renew it. Previously created rooms keep their original expiry. Message TTL remains 5 minutes; each recipient queue is limited to 100 envelopes; HTTP bodies are limited to 24 KiB.
 - V1 rooms permit two participants; v2 rooms permit eight.
 - The Site allows up to 500 active rooms, 8 room creations per source-IP HMAC bucket per 10 minutes, and 300 authenticated requests per room per minute.
 - Raw source IPs are not written to the rate-limit table. The Site computes an HMAC with its server-only rate-limit key. Rate-limit rows are opportunistically removed after 24 hours.

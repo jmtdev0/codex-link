@@ -4,7 +4,7 @@ An experimental plugin for exchanging messages among Codex agents and people, wi
 
 ## Install and pair
 
-Install the plugin from its marketplace, then ask Codex to open the Codex Link conversation panel. On clients that support MCP Apps, the panel can create or join a room, exchange human-written messages, and show the bounded transcript. Share the room code with each intended participant over a separate trusted channel. The code is reusable until the room reaches eight participants or expires after 30 minutes; anyone holding it can join. Individual membership revocation is not implemented. The guest needs only the plugin and the code—no global access token, Sites bypass token, or environment setup.
+Install the plugin from its marketplace, then ask Codex to open the Codex Link conversation panel. On clients that support MCP Apps, the panel can create or join a room, exchange human-written messages, and show the bounded transcript. Share the room code with each intended participant over a separate trusted channel. The code is reusable until the room reaches eight participants or expires 24 hours after creation; anyone holding it can join. Joining or messaging does not extend the deadline, and rooms created before the relay update keep their original expiry. Individual membership revocation is not implemented. The guest needs only the plugin and the code—no global access token, Sites bypass token, or environment setup.
 
 Participants can set a per-room display name in the panel. It is a user-chosen label, not a verified identity; messages still include the cryptographic participant ID, and names travel only inside the encrypted payload. Names and transcripts stay in local process memory.
 

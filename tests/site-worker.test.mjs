@@ -93,6 +93,80 @@ test("D1 relay stores ciphertext only, enforces room capabilities, ACKs and expi
   }
 });
 
+for (const protocolVersion of [1, 2]) {
+  test(`default v${protocolVersion} D1 rooms last 24 hours without extending message retention or renewing expiry`, { skip: !sqliteAvailable }, async (t) => {
+    const createdAt = Date.now();
+    let simulatedNow = createdAt;
+    t.mock.method(Date, "now", () => simulatedNow);
+    const roomTtlMs = 24 * 60 * 60 * 1000;
+    const messageTtlMs = 5 * 60 * 1000;
+    const db = await createD1TestDatabase();
+    const creatorWorker = createSitesRelay({ cleanupIntervalMs: 0 });
+    const joiningWorker = createSitesRelay({ cleanupIntervalMs: 0 });
+    const invitation = createInvitation({ version: protocolVersion });
+    const [owner, peer, latePeer] = Array.from({ length: 3 }, () => createIdentity());
+    const memberBody = (identity) => ({
+      participantId: identity.participantId,
+      protocolVersion,
+      ...(protocolVersion === 2 ? { publicKey: identity.publicKey } : {}),
+    });
+    const statusPath = `/v1/rooms/${invitation.roomId}/status?participantId=${owner.participantId}`;
+
+    try {
+      const createdResponse = await request(creatorWorker, "/v1/rooms", {
+        db, method: "POST", body: { roomId: invitation.roomId, ...memberBody(owner) },
+      });
+      assert.equal(createdResponse.status, 201);
+      const created = await createdResponse.json();
+      const deadline = new Date(createdAt + roomTtlMs).toISOString();
+      assert.equal(created.expiresAt, deadline);
+
+      // A new Worker can accept a join after the previous 30-minute lifetime.
+      simulatedNow += 31 * 60 * 1000;
+      const joinedResponse = await request(joiningWorker, `/v1/rooms/${invitation.roomId}/join`, {
+        db, method: "POST", body: memberBody(peer),
+      });
+      assert.equal(joinedResponse.status, 200);
+      assert.equal((await joinedResponse.json()).expiresAt, deadline);
+      const forbidden = await request(joiningWorker, statusPath, { db, token: "B".repeat(43) });
+      assert.equal(forbidden.status, 404, "longer rooms still require their own bearer capability");
+
+      const envelope = encryptMessage(invitation, owner.participantId, "short-lived ciphertext", owner);
+      const sent = await request(creatorWorker, `/v1/rooms/${invitation.roomId}/messages`, {
+        db, method: "POST", body: envelope,
+      });
+      assert.equal(sent.status, 202);
+      const row = db.sqlite.prepare("SELECT expires_at FROM codex_link_messages").get();
+      assert.equal(row.expires_at, simulatedNow + messageTtlMs);
+      simulatedNow += messageTtlMs - 1;
+      const inboxPath = `/v1/rooms/${invitation.roomId}/messages?participantId=${peer.participantId}`;
+      assert.equal((await (await request(joiningWorker, inboxPath, { db })).json()).messages.length, 1);
+      simulatedNow += 1;
+      assert.deepEqual((await (await request(joiningWorker, inboxPath, { db })).json()).messages, []);
+      assert.equal((await (await request(joiningWorker, statusPath, { db })).json()).expiresAt, deadline);
+
+      simulatedNow = createdAt + roomTtlMs - 1;
+      const lateJoin = await request(joiningWorker, `/v1/rooms/${invitation.roomId}/join`, {
+        db, method: "POST", body: memberBody(protocolVersion === 1 ? peer : latePeer),
+      });
+      assert.equal(lateJoin.status, 200);
+      assert.equal((await lateJoin.json()).expiresAt, deadline);
+      assert.equal((await request(creatorWorker, statusPath, { db })).status, 200);
+      simulatedNow += 1;
+      assert.equal((await request(joiningWorker, statusPath, { db })).status, 404);
+      const expiredJoin = await request(creatorWorker, `/v1/rooms/${invitation.roomId}/join`, {
+        db, method: "POST", body: memberBody(peer),
+      });
+      assert.equal(expiredJoin.status, 404);
+      for (const table of ["codex_link_rooms", "codex_link_room_members", "codex_link_messages"]) {
+        assert.equal(db.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0);
+      }
+    } finally {
+      db.close();
+    }
+  });
+}
+
 test("separate Worker instances share rooms and ciphertext through the D1 binding", { skip: !sqliteAvailable }, async () => {
   const db = await createD1TestDatabase();
   const firstInstance = createSitesRelay({ cleanupIntervalMs: 0, waitPollMs: 5 });

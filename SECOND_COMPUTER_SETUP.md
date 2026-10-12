@@ -23,7 +23,7 @@ The guest needs only the plugin and a room code. Do not configure or request `CO
 2. Ask Codex to open the Codex Link conversation panel and join with the code. Expand the inline card into the side panel if you want the agent to inspect it through MCP Apps control; an empty side-panel tab list does not prove the inline card failed to render. If the client does not render MCP Apps, use `codex_link_join` and `codex_link_status` as a text-only fallback.
 3. Confirm that both installations report membership in the same room. Participant count alone does not prove message delivery.
 
-Rooms support up to eight participants and expire after 30 minutes. Individual participant revocation is not available; the owner can close the room for everyone, while another participant can leave.
+New rooms support up to eight participants and expire 24 hours after creation. Joining and messaging do not renew the deadline, and older rooms keep their original expiry. Individual participant revocation is not available; the owner can close the room for everyone, while another participant can leave. Messages still expire from the relay queue after five minutes; a longer room lifetime does not persist the local transcript or recover signing identities after a process restart.
 
 ## Check messages and participant names
 

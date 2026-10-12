@@ -1,5 +1,12 @@
 # Changelog
 
+## Relay update — 24-hour rooms
+
+- Give newly created v1 and v2 rooms an absolute 24-hour lifetime in both the hosted Worker and the development relay. Existing hosted rooms keep their stored expiry; joins and traffic never renew it.
+- Keep message retention at five minutes, along with the existing queue, membership, and rate limits. Do not change encryption, bearer capabilities, ephemeral signing identities, local transcript storage, or per-room consent.
+- Add clock-controlled expiry tests for both protocols and the development relay, including late joins, unchanged deadlines, five-minute message cleanup, and rejection exactly at room expiry.
+- This is a relay update, not a plugin release. Plugin 0.6.2 already displays the server-provided expiry; no reinstall or restart is needed just for the new room lifetime.
+
 ## Unreleased — Test-harness follow-up
 
 - Drive the D1 ACK/expiry test with a scoped clock instead of a 25 ms wall-clock race. Verify delivery just before the TTL, cleanup exactly at expiry, and a zero-count ACK for already-expired ciphertext.

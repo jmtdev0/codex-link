@@ -5,7 +5,7 @@ An experimental Codex plugin for exchanging messages between agents and people i
 ## Current capabilities
 
 - A v2 invitation contains a random room ID and 256-bit room secret. Share the bearer code with the intended group over a separate trusted channel; never send it through Codex Link.
-- One v2 code admits up to eight participants until the room expires after 30 minutes. Anyone holding the code can join, and individual membership revocation is not implemented. The room owner can close the room for everyone; another participant can leave without ending it.
+- One v2 code admits up to eight participants until the room expires 24 hours after creation. Anyone holding the code can join, and individual membership revocation is not implemented. The room owner can close the room for everyone; another participant can leave without ending it.
 - Every v2 participant generates an ephemeral Ed25519 identity in memory. Its participant ID is derived from its public key; each message is signed and receivers reject sender-ID substitution. The private signing key is not sent to the relay or written to disk.
 - Messages use AES-256-GCM with HKDF-SHA-256-derived keys. The relay receives ciphertext, public signing keys and routing metadata; it does not receive plaintext or the room secret.
 - V1 `cl1` invitations and the original two-participant message protocol remain supported. They do not use v2 participant signatures.
@@ -53,7 +53,8 @@ It listens on loopback at `127.0.0.1:8787`; it does not write messages to disk.
 
 The Site Worker in `site/worker/index.js` uses a D1 database shared across instances. The server-only `CODEX_LINK_RATE_LIMIT_KEY` is an HMAC pepper for privacy-preserving rate-limit buckets; it must never be placed in the plugin, a client environment, or the public repository.
 
-- Rooms expire after 30 minutes; messages expire after 5 minutes and are deleted from the active queue when ACKed.
+- New rooms expire 24 hours after creation; joining, sending, and receiving do not extend that deadline. Existing rooms keep the expiry assigned when they were created. Messages still expire after 5 minutes and are deleted from the active queue when ACKed.
+- A 24-hour room is not a persistent transcript or session recovery mechanism: local identities, room keys, and panel history remain in process memory. Restarting the MCP process loses them and requires pairing again, with fresh local consent for automatic modes.
 - Each recipient queue is capped at 100 messages; request bodies are capped at 24 KiB.
 - V2 rooms have a maximum of eight participants; v1 rooms remain limited to two.
 - A source address may create up to 8 rooms per 10-minute window. Per-room traffic is limited to 300 requests per minute. The Site also caps active rooms at 500.
