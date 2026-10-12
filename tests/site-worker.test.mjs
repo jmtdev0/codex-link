@@ -21,9 +21,13 @@ function request(worker, path, { db, method = "GET", body, token = ROOM_CAPABILI
   }), { CODEX_LINK_RATE_LIMIT_KEY: RATE_LIMIT_KEY, DB: db });
 }
 
-test("D1 relay stores ciphertext only, enforces room capabilities, ACKs and expires messages", { skip: !sqliteAvailable }, async () => {
+test("D1 relay stores ciphertext only, enforces room capabilities, ACKs and expires messages", { skip: !sqliteAvailable }, async (t) => {
+  // The short TTL must follow the test clock, not scheduling delays in parallel runs.
+  let simulatedNow = Date.now();
+  t.mock.method(Date, "now", () => simulatedNow);
+  const messageTtlMs = 25;
   const db = await createD1TestDatabase();
-  const worker = createSitesRelay({ roomTtlMs: 5_000, messageTtlMs: 25, cleanupIntervalMs: 0 });
+  const worker = createSitesRelay({ roomTtlMs: 5_000, messageTtlMs, cleanupIntervalMs: 0 });
   const invitation = createInvitation({ version: 1 });
   const alice = randomId();
   const bob = randomId();
@@ -65,10 +69,21 @@ test("D1 relay stores ciphertext only, enforces room capabilities, ACKs and expi
 
     const expiringEnvelope = encryptMessage(invitation, alice, "temporal");
     await request(worker, `/v1/rooms/${invitation.roomId}/messages`, { db, method: "POST", body: expiringEnvelope });
-    await new Promise((resolve) => setTimeout(resolve, 35));
+    simulatedNow += messageTtlMs - 1;
+    const beforeExpiry = await request(worker, `/v1/rooms/${invitation.roomId}/messages?participantId=${bob}`, { db });
+    const beforeExpiryMessages = (await beforeExpiry.json()).messages;
+    assert.equal(beforeExpiryMessages.length, 1);
+    assert.equal(decryptMessage(invitation, beforeExpiryMessages[0]), "temporal");
+    simulatedNow += 1;
     const expired = await request(worker, `/v1/rooms/${invitation.roomId}/messages?participantId=${bob}`, { db });
     assert.deepEqual((await expired.json()).messages, []);
     assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_messages").get().count, 0);
+    const expiredAck = await request(worker, `/v1/rooms/${invitation.roomId}/acks`, {
+      db,
+      method: "POST",
+      body: { participantId: bob, messageIds: [expiringEnvelope.messageId] },
+    });
+    assert.deepEqual(await expiredAck.json(), { acknowledged: 0 });
 
     const closed = await request(worker, `/v1/rooms/${invitation.roomId}`, { db, method: "DELETE", body: { participantId: alice } });
     assert.equal(closed.status, 200);

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — Test-harness follow-up
+
+- Drive the D1 ACK/expiry test with a scoped clock instead of a 25 ms wall-clock race. Verify delivery just before the TTL, cleanup exactly at expiry, and a zero-count ACK for already-expired ciphertext.
+- This changes tests only; plugin 0.6.2, its runtime files, and the deployed relay are unchanged. No plugin reinstall is needed for this test-harness correction.
+
 ## 0.6.2 — Two-way conversation mirroring
 
 - Mirror new incoming and outgoing conversation messages so each opted-in chat can retain both sides, including local panel messages and the local agent's final replies.
