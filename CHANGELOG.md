@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1 — Manual chat attribution and stale-room cleanup
+
+- Preserve each selected message's display name, participant-ID prefix, message ID, type, and direction in the manual chat preview and confirmed context post.
+- Serialize selected messages as untrusted JSON data; names remain unverified labels and manual posting does not authorize room replies or other actions.
+- Reconcile a failed receive with MCP room state instead of assuming that a timeout means the room is gone.
+- Revoke local mirror/participation settings for sessions absent from that state, clear expired local invitation displays, and discard a pending preview when its selected room disappears.
+- Keep a returning room's automatic modes off until the user opts in again. Do not change encryption, relay behavior, storage, or the 30-minute room expiry.
+- Add regression coverage for manual attribution, quoted payloads, and consent cleanup; the local suite passes 36 tests. Cross-desktop Live Mirror and Agent Participation validation remains pending.
+
 ## 0.6.0 — Group participant display names
 
 - Let each participant set or clear a short per-room display name in the conversation panel.

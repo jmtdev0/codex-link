@@ -13,14 +13,14 @@ codex plugin marketplace add .
 codex plugin add codex-link@codex-link-local
 ```
 
-If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Restart the ChatGPT desktop app after updating, open a new chat, and verify that the installed plugin reports version 0.6.0.
+If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Restart the ChatGPT desktop app after updating, open a new chat, and verify that the installed plugin reports version 0.6.1. Check the active MCP version as well: installation metadata alone does not prove an already-running server loaded the update.
 
 The guest needs only the plugin and a room code. Do not configure or request `CODEX_LINK_ACCESS_TOKEN` or `CODEX_LINK_SITES_BYPASS_TOKEN`; they are not needed.
 
 ## Join a fresh test room
 
 1. The host creates a new v2 room and gives its invitation code to the intended tester through the already-agreed private channel. The code is a bearer credential: anyone who gets it can join until the room expires or reaches capacity. Never post it in this public repository or send it through Codex Link.
-2. Ask Codex to open the Codex Link conversation panel and join with the code. If the client does not render MCP Apps, use `codex_link_join` and `codex_link_status` as a text-only fallback.
+2. Ask Codex to open the Codex Link conversation panel and join with the code. Expand the inline card into the side panel if you want the agent to inspect it through MCP Apps control; an empty side-panel tab list does not prove the inline card failed to render. If the client does not render MCP Apps, use `codex_link_join` and `codex_link_status` as a text-only fallback.
 3. Confirm that both installations report membership in the same room. Participant count alone does not prove message delivery.
 
 Rooms support up to eight participants and expire after 30 minutes. Individual participant revocation is not available; the owner can close the room for everyone, while another participant can leave.
@@ -30,6 +30,21 @@ Rooms support up to eight participants and expire after 30 minutes. Individual p
 Use a fresh, non-sensitive chat and exchange a short benign message in each direction, such as “Test message from the second Codex.” Confirm that the message appears and decrypts in the other participant’s panel. Set a distinct per-room display name on each installation and verify that incoming messages show the chosen label alongside the participant ID. Names are unverified labels, not authenticated identities.
 
 If a third trusted participant is available, optionally join it to check that a group message reaches all members. Do not infer eight-member capacity from a two-computer test.
+
+## Check manual posting to the chat
+
+1. Select one harmless received message, choose **Add selected to chat**, and inspect the preview. In 0.6.1, the quoted JSON should preserve that message's display name and participant-ID prefix; clearing a current label must not rewrite an earlier message's attribution.
+2. Confirm the post once. Check the actual chat history, not just the panel's success state. The host may queue the follow-up while the agent is still working, so allow that turn to finish before declaring delivery missing.
+3. Verify exactly one posted copy and the untrusted-content warning. Do not retry a post whose delivery is still ambiguous.
+
+## Check Live Mirror separately
+
+Live Mirror is off by default and does not authorize Codex Link replies. Keep Agent Participation off during this test.
+
+1. Explicitly review and confirm Live Mirror for the selected room.
+2. Verify that the existing transcript is not reposted. Send a new harmless message from the other participant and check that it appears in the active chat exactly once, with its label, stable ID, and untrusted-content framing.
+3. Pause the mirror and send another message. It should remain in the room panel without a new chat post.
+4. Reopen the panel as a new instance and verify that the mode starts off. After a room expires or its MCP session disappears, refresh the panel and verify that stale consent and the local invitation display are cleared. A fresh room must require fresh opt-in.
 
 ## Check optional Agent Participation
 
