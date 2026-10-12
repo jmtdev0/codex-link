@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,17 @@ import { createRelayServer } from "../dev-relay/server.mjs";
 
 const pluginRoot = fileURLToPath(new URL("../plugin/", import.meta.url));
 const mcpServerPath = fileURLToPath(new URL("../plugin/src/mcp-server.mjs", import.meta.url));
+const panelPath = fileURLToPath(new URL("../plugin/ui/conversation-panel.html", import.meta.url));
+const manifestPath = fileURLToPath(new URL("../plugin/.codex-plugin/plugin.json", import.meta.url));
+const pluginVersion = JSON.parse(await readFile(manifestPath, "utf8")).version;
+
+test("manifest, MCP server, and panel advertise the same plugin version", async () => {
+  const serverSource = await readFile(mcpServerPath, "utf8");
+  const panelSource = await readFile(panelPath, "utf8");
+  assert.match(serverSource, new RegExp(`version: ${JSON.stringify(pluginVersion)}`));
+  assert.ok(serverSource.includes(`conversation-panel-v${pluginVersion}.html`));
+  assert.ok(panelSource.includes(`version: ${JSON.stringify(pluginVersion)}`));
+});
 
 function startMcp(baseUrl) {
   const child = spawn(process.execPath, [mcpServerPath], {
@@ -81,12 +93,12 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   for (const client of [alice, bob, charlie]) {
     const initialized = await client.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
     assert.equal(initialized.serverInfo.name, "codex-link");
-    assert.equal(initialized.serverInfo.version, "0.4.2");
+    assert.equal(initialized.serverInfo.version, pluginVersion);
   }
   const listed = await alice.rpc("tools/list");
   assert.equal(listed.tools.length, 13);
   const panelTool = listed.tools.find((tool) => tool.name === "codex_link_open_panel");
-  assert.equal(panelTool._meta.ui.resourceUri, "ui://codex-link/conversation-panel-v0.4.2.html");
+  assert.equal(panelTool._meta.ui.resourceUri, `ui://codex-link/conversation-panel-v${pluginVersion}.html`);
   const panelTools = listed.tools.filter((tool) => tool.name.startsWith("codex_link_panel_"));
   assert.equal(panelTools.length, 6);
   for (const tool of panelTools) {

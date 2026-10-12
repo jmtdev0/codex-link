@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3 — Version metadata correction
+
+- Align the packaged plugin manifest with the MCP server and conversation panel so marketplace installs can distinguish the current release.
+- Add a regression test that checks the manifest, server, and panel versions stay in sync.
+- No relay, storage, or protocol behavior changes.
+
 ## 0.4.2 — Explicit live chat mirroring
 
 - Add an opt-in, per-room Live Mirror that posts only new incoming messages into the active chat while the panel remains open.
