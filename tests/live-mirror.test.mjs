@@ -112,6 +112,79 @@ test("ambiguous host failures are not retried automatically", async () => {
   assert.equal(attempts, 1);
 });
 
+test("concurrent refreshes do not duplicate a pending post or discard the next message", async () => {
+  const sent = [];
+  let releaseFirstPost;
+  let signalFirstPost;
+  const firstPostPending = new Promise((resolve) => { releaseFirstPost = resolve; });
+  const firstPostStarted = new Promise((resolve) => { signalFirstPost = resolve; });
+  const mirror = createLiveMirrorController(async (prompt) => {
+    sent.push(prompt);
+    if (sent.length === 1) {
+      signalFirstPost();
+      await firstPostPending;
+    }
+  });
+  mirror.enable("room-a", []);
+  const first = { direction: "incoming", messageId: "first", senderId: "peer", messageType: "human", text: "first question" };
+  const second = { ...first, messageId: "second", text: "second question" };
+  const pending = mirror.mirror("room-a", [first]);
+  await firstPostStarted;
+
+  try {
+    assert.equal((await mirror.mirror("room-a", [first, second])).postedCount, 0);
+    assert.equal(sent.length, 1, "another refresh must not start a second host post for this room");
+  } finally {
+    releaseFirstPost();
+    await pending;
+  }
+
+  assert.deepEqual((await pending).messageIds, ["first"]);
+  assert.deepEqual((await mirror.mirror("room-a", [first, second])).messageIds, ["second"]);
+  assert.equal((await mirror.mirror("room-a", [first, second])).postedCount, 0);
+  const postedIds = sent.flatMap((prompt) => JSON.parse(prompt.split("\n\n").at(-1)).map((message) => message.message_id));
+  assert.deepEqual(postedIds, ["first", "second"]);
+});
+
+test("pausing during a pending host post stops subsequent posts and resuming skips paused messages", async () => {
+  const sent = [];
+  let releaseFirstPost;
+  let signalFirstPost;
+  const firstPostPending = new Promise((resolve) => { releaseFirstPost = resolve; });
+  const firstPostStarted = new Promise((resolve) => { signalFirstPost = resolve; });
+  const mirror = createLiveMirrorController(async (prompt) => {
+    sent.push(prompt);
+    if (sent.length === 1) {
+      signalFirstPost();
+      await firstPostPending;
+    }
+  });
+  mirror.enable("room-a", []);
+  const first = { direction: "incoming", messageId: "before-pause", senderId: "peer", messageType: "human", text: "submitted before the pause" };
+  const paused = { ...first, messageId: "while-paused", text: "received while paused" };
+  const after = { ...first, messageId: "after-resume", text: "received after fresh consent" };
+  const pending = mirror.mirror("room-a", [first]);
+  await firstPostStarted;
+
+  try {
+    mirror.disable("room-a");
+    assert.equal(mirror.isEnabled("room-a"), false);
+    assert.equal((await mirror.mirror("room-a", [first, paused])).postedCount, 0);
+    assert.equal(sent.length, 1);
+  } finally {
+    // A request already handed to the host cannot be recalled by pausing.
+    releaseFirstPost();
+    await pending;
+  }
+
+  assert.equal((await mirror.mirror("room-a", [first, paused, after])).postedCount, 0);
+  mirror.enable("room-a", [first, paused]);
+  assert.equal((await mirror.mirror("room-a", [first, paused])).postedCount, 0);
+  assert.deepEqual((await mirror.mirror("room-a", [first, paused, after])).messageIds, ["after-resume"]);
+  const postedIds = sent.flatMap((prompt) => JSON.parse(prompt.split("\n\n").at(-1)).map((message) => message.message_id));
+  assert.deepEqual(postedIds, ["before-pause", "after-resume"]);
+});
+
 test("live mirror includes both sides of the conversation but keeps ACKs and progress in the panel", async () => {
   const sent = [];
   const mirror = createLiveMirrorController(async (prompt) => sent.push(prompt));
