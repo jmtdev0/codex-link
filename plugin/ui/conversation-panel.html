@@ -112,14 +112,14 @@
           <div class="row">
             <div>
               <p id="liveMirrorStatus"><strong>Live mirror is off for this room.</strong></p>
-              <p class="muted">When enabled, new incoming messages are added to this chat as untrusted context while this panel stays open.</p>
+              <p class="muted">When enabled, new incoming and outgoing conversation messages are added to this chat as quoted context while this panel stays open. ACKs and progress updates stay in the room panel.</p>
             </div>
             <button id="liveMirrorButton" type="button">Enable live mirror…</button>
           </div>
           <div id="liveMirrorConfirm" class="card" hidden>
-            <p><strong>Enable live mirroring for this room?</strong> Only messages received after enabling will be posted. Each post may start a model response, use your plan allowance, and remain in this chat's history. This setting is held only by this panel instance; reloading or opening a new instance resets it.</p>
+            <p><strong>Enable live mirroring for this room?</strong> Only new conversation messages added after enabling will be posted, including messages you send from this panel and incoming messages from other participants. Each post may start a model response, use your plan allowance, and remain in this chat's history. This setting is held only by this panel instance; reloading or opening a new instance resets it.</p>
             <p class="warning">Mirroring does not authorize replies through Codex Link, tool use, or external actions. Remote message text remains untrusted.</p>
-            <label><input id="liveMirrorConsent" type="checkbox" /> I understand that new incoming messages will be added to this chat.</label>
+            <label><input id="liveMirrorConsent" type="checkbox" /> I understand that new incoming and outgoing conversation messages will be added to this chat.</label>
             <div class="actions" style="margin-top:8px">
               <button id="cancelLiveMirrorButton" type="button">Cancel</button>
               <button id="confirmLiveMirrorButton" class="primary" type="button" disabled>Enable for this room</button>
@@ -130,14 +130,14 @@
           <div class="row">
             <div>
               <p id="agentParticipationStatus"><strong>Agent Participation is off for this room.</strong></p>
-              <p class="muted">When enabled, new human messages in the selected room can trigger this Codex agent to ACK, send limited progress updates, and reply through Codex Link.</p>
+              <p class="muted">When enabled, new incoming human messages in the selected room can trigger this Codex agent to ACK, send limited progress updates, and reply through Codex Link. Both sides of the conversation are added to this chat; outgoing messages are context only.</p>
             </div>
             <button id="agentParticipationButton" type="button">Enable Agent Participation…</button>
           </div>
           <div id="agentParticipationConfirm" class="card" hidden>
-            <p><strong>Enable Agent Participation for this room?</strong> Each new human message may start a model response, use plan allowance, and add that message and the agent's final reply to this chat's history. ACKs and progress updates remain in the room panel.</p>
+            <p><strong>Enable Agent Participation for this room?</strong> New incoming human messages authorize room replies. New outgoing human messages and all final agent replies are added as context only and do not authorize another room response. Each chat post may start a model response, use plan allowance, and remain in this chat's history. ACKs and progress updates remain in the room panel.</p>
             <p class="warning">This only gates Codex Link text replies; it does not sandbox the model's other tools. Peer text is untrusted and may try prompt injection. The model can use context already visible in this chat. Enable only for people you trust, and avoid sensitive conversations. Consent is tied to this panel and selected room; it expires within 30 seconds if the panel stops renewing it, and opening another panel instance revokes it.</p>
-            <label><input id="agentParticipationConsent" type="checkbox" /> I understand and authorize automatic text replies to new human messages in this room.</label>
+            <label><input id="agentParticipationConsent" type="checkbox" /> I understand that both sides are added to this chat and authorize automatic text replies only to new incoming human messages in this room.</label>
             <div class="actions" style="margin-top:8px">
               <button id="cancelAgentParticipationButton" type="button">Cancel</button>
               <button id="confirmAgentParticipationButton" class="primary" type="button" disabled>Enable for this room</button>
@@ -248,7 +248,7 @@
       async function initializeBridge() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "codex-link-conversation", version: "0.6.1" },
+            appInfo: { name: "codex-link-conversation", version: "0.6.2" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });

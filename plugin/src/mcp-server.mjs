@@ -20,7 +20,7 @@ const MAX_TRANSCRIPT_MESSAGES = 100;
 const AGENT_PARTICIPATION_LEASE_MS = 30_000;
 const MAX_AGENT_PROGRESS_MESSAGES = 8;
 const RECEIPT_PREFIX = "[[codex-link-receipt:v1]]";
-const PANEL_URI = "ui://codex-link/conversation-panel-v0.6.1.html";
+const PANEL_URI = "ui://codex-link/conversation-panel-v0.6.2.html";
 const panelTemplate = readFileSync(new URL("../ui/conversation-panel.html", import.meta.url), "utf8");
 const PANEL_HTML = panelTemplate.replace("/* CODEX_LINK_LIVE_MIRROR_HELPER */", createLiveMirrorController.toString());
 if (PANEL_HTML === panelTemplate) throw new Error("The conversation panel is missing its live-mirror helper insertion point.");
@@ -507,7 +507,7 @@ async function callTool(name, args = {}) {
   if (name === "codex_link_open_panel") {
     return {
       content: [{ type: "text", text: "Codex Link conversation panel is ready. Room messages remain in local memory until this MCP process exits." }],
-      structuredContent: { ready: true, version: "0.6.1" },
+      structuredContent: { ready: true, version: "0.6.2" },
     };
   }
 
@@ -809,7 +809,7 @@ async function handleRequest(message) {
       result: {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {}, resources: {} },
-        serverInfo: { name: "codex-link", version: "0.6.1" },
+      serverInfo: { name: "codex-link", version: "0.6.2" },
         instructions: "Encrypt all text locally. Never send invitation codes or plaintext to the relay.",
       },
     });

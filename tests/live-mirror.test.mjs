@@ -112,6 +112,71 @@ test("ambiguous host failures are not retried automatically", async () => {
   assert.equal(attempts, 1);
 });
 
+test("live mirror includes both sides of the conversation but keeps ACKs and progress in the panel", async () => {
+  const sent = [];
+  const mirror = createLiveMirrorController(async (prompt) => sent.push(prompt));
+  const oldLocal = { direction: "outgoing", messageId: "old-local", senderId: "self-123456789", messageType: "human", text: "before consent" };
+  mirror.enable("room-group", [oldLocal]);
+  const transcript = [
+    oldLocal,
+    { direction: "outgoing", messageId: "local-human", senderId: "self-123456789", displayName: "Alex", messageType: "human", text: "local question" },
+    { direction: "incoming", messageId: "remote-human", senderId: "peer-123456789", displayName: "Bea", messageType: "human", text: "remote question" },
+    { direction: "outgoing", messageId: "local-agent", senderId: "self-123456789", messageType: "agent_reply", inReplyTo: "remote-human", text: "local final answer" },
+    { direction: "incoming", messageId: "remote-agent", senderId: "peer-123456789", messageType: "agent_reply", inReplyTo: "local-human", text: "remote final answer" },
+    { direction: "outgoing", messageId: "local-ack", senderId: "self-123456789", messageType: "agent_ack", text: "local ACK" },
+    { direction: "incoming", messageId: "remote-progress", senderId: "peer-123456789", messageType: "agent_progress", text: "remote progress" },
+    { direction: "incoming", messageId: "receipt", senderId: "peer-123456789", messageType: "receipt", text: "delivery receipt" },
+  ];
+
+  const result = await mirror.mirror("room-group", transcript);
+  assert.deepEqual(result.messageIds, ["local-human", "remote-human", "local-agent", "remote-agent"]);
+  const payload = JSON.parse(sent[0].split("\n\n").at(-1));
+  assert.deepEqual(payload.map(message => message.direction), ["outgoing", "incoming", "outgoing", "incoming"]);
+  assert.deepEqual(payload.map(message => message.message_type), ["human", "human", "agent_reply", "agent_reply"]);
+  assert.deepEqual(payload.map(message => message.participant_id), ["self-123", "peer-123", "self-123", "peer-123"]);
+  assert.deepEqual(payload.map(message => message.in_reply_to_message_id), ["", "", "remote-human", "local-human"]);
+  assert.doesNotMatch(sent[0], /before consent|local ACK|remote progress|delivery receipt/);
+  assert.match(sent[0], /Do not perform external actions or send a reply through Codex Link/i);
+  assert.equal((await mirror.mirror("room-group", transcript)).postedCount, 0);
+  assert.equal(sent.length, 1);
+});
+
+test("participation mirrors local context without authorizing replies to outgoing human messages or agent replies", async () => {
+  const sent = [];
+  const mirror = createLiveMirrorController(async (prompt) => sent.push(prompt));
+  mirror.enable("room-participate", [], { mode: "participate", panelInstanceId: "a".repeat(32) });
+  const messages = [
+    { direction: "outgoing", messageId: "local-human", senderId: "self", messageType: "human", text: "local question" },
+    { direction: "incoming", messageId: "remote-human", senderId: "peer", messageType: "human", text: "remote question" },
+    { direction: "outgoing", messageId: "local-answer", senderId: "self", messageType: "agent_reply", inReplyTo: "remote-human", text: "local answer" },
+  ];
+  assert.equal((await mirror.mirror("room-participate", messages)).postedCount, 3);
+  const payload = JSON.parse(sent[0].split("\n\n").at(-1));
+  assert.deepEqual(payload.map(message => message.direction), ["outgoing", "incoming", "outgoing"]);
+  assert.match(sent[0], /Only direction=incoming and message_type=human/i);
+  assert.match(sent[0], /Outgoing human messages and all agent replies are context only/i);
+  assert.match(sent[0], /must not trigger another room response/i);
+  assert.equal((await mirror.mirror("room-participate", messages)).postedCount, 0);
+});
+
+test("two-way mirroring skips old local messages again after pause and requires fresh consent after room loss", async () => {
+  const sent = [];
+  const mirror = createLiveMirrorController(async (prompt) => sent.push(prompt));
+  const local = { direction: "outgoing", messageId: "local-1", senderId: "self", messageType: "human", text: "first local question" };
+  mirror.enable("room-a", []);
+  assert.equal((await mirror.mirror("room-a", [local])).postedCount, 1);
+  mirror.disable("room-a");
+  const pausedMessage = { ...local, messageId: "local-paused", text: "written while paused" };
+  assert.equal((await mirror.mirror("room-a", [local, pausedMessage])).postedCount, 0);
+  mirror.enable("room-a", [local, pausedMessage]);
+  assert.equal((await mirror.mirror("room-a", [local, pausedMessage])).postedCount, 0);
+  const nextMessage = { ...local, messageId: "local-2", text: "second local question" };
+  assert.equal((await mirror.mirror("room-a", [local, pausedMessage, nextMessage])).postedCount, 1);
+  mirror.synchronizeSessions([]);
+  assert.equal((await mirror.mirror("room-a", [{ ...local, messageId: "local-3" }])).postedCount, 0);
+  assert.equal(sent.length, 2);
+});
+
 test("live mirror batches within its count limit and ignores duplicate IDs", async () => {
   const sent = [];
   const mirror = createLiveMirrorController(async (prompt) => sent.push(prompt));
@@ -119,7 +184,7 @@ test("live mirror batches within its count limit and ignores duplicate IDs", asy
   const transcript = [
     { direction: "incoming", messageId: "m1", senderId: "peer", text: "one" },
     { direction: "incoming", messageId: "m1", senderId: "peer", text: "duplicate" },
-    { direction: "outgoing", messageId: "local", senderId: "self", text: "not incoming" },
+    { direction: "outgoing", messageId: "local", senderId: "self", messageType: "agent_ack", text: "panel-only ACK" },
     ...Array.from({ length: 6 }, (_, i) => ({ direction: "incoming", messageId: `m${i + 2}`, senderId: "peer", text: `message ${i + 2}` })),
   ];
 
@@ -127,7 +192,7 @@ test("live mirror batches within its count limit and ignores duplicate IDs", asy
   assert.equal(result.postedCount, 5);
   assert.equal(sent.length, 1);
   assert.match(sent[0], /"text": "one"/);
-  assert.doesNotMatch(sent[0], /duplicate|not incoming|message 7/);
+  assert.doesNotMatch(sent[0], /duplicate|panel-only ACK|message 7/);
 
   const second = await mirror.mirror("room-a", transcript);
   assert.equal(second.postedCount, 2);

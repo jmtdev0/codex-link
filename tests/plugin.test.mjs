@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { createRelayServer } from "../dev-relay/server.mjs";
+import { createLiveMirrorController } from "../plugin/src/live-mirror.mjs";
 
 const pluginRoot = fileURLToPath(new URL("../plugin/", import.meta.url));
 const mcpServerPath = fileURLToPath(new URL("../plugin/src/mcp-server.mjs", import.meta.url));
@@ -274,12 +275,24 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   });
   assert.equal(staleReply.isError, true);
 
+  const chatPostsA = [];
+  const chatPostsB = [];
+  const mirrorA = createLiveMirrorController(async (prompt) => chatPostsA.push(prompt));
+  const mirrorB = createLiveMirrorController(async (prompt) => chatPostsB.push(prompt));
+  const beforeTwoWayMirrorA = await callTool(alice, "codex_link_panel_state", { session_id: panelSessionA });
+  mirrorA.enable(panelSessionA, beforeTwoWayMirrorA._meta.transcript);
+  mirrorB.enable(panelSessionB, afterConsent._meta.transcript, { mode: "participate", panelInstanceId });
+
   const newHumanText = "new human message after consent";
   await callTool(alice, "codex_link_panel_send", { session_id: panelSessionA, message: newHumanText });
   const newHumanReceived = await callTool(bob, "codex_link_panel_receive", { session_id: panelSessionB, wait_ms: 0 });
   assert.equal(newHumanReceived._meta.messages.length, 1);
   const newHuman = newHumanReceived._meta.messages[0];
   assert.equal(newHuman.messageType, "human");
+  const newHumanStateA = await callTool(alice, "codex_link_panel_state", { session_id: panelSessionA });
+  const newHumanStateB = await callTool(bob, "codex_link_panel_state", { session_id: panelSessionB, panel_instance_id: panelInstanceId });
+  assert.equal((await mirrorA.mirror(panelSessionA, newHumanStateA._meta.transcript)).postedCount, 1);
+  assert.equal((await mirrorB.mirror(panelSessionB, newHumanStateB._meta.transcript)).postedCount, 1);
 
   const wrongPanelReply = await callTool(bob, "codex_link_agent_send", {
     session_id: panelSessionB,
@@ -353,6 +366,37 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
     bobTranscriptAfterReply._meta.transcript.filter((message) => message.direction === "outgoing").map((message) => message.messageType),
     ["agent_ack", ...Array(8).fill("agent_progress"), "agent_reply"],
   );
+  const aliceTranscriptAfterReply = await callTool(alice, "codex_link_panel_state", { session_id: panelSessionA });
+  assert.equal((await mirrorA.mirror(panelSessionA, aliceTranscriptAfterReply._meta.transcript)).postedCount, 1);
+  assert.equal((await mirrorB.mirror(panelSessionB, bobTranscriptAfterReply._meta.transcript)).postedCount, 1);
+  const mirroredA = chatPostsA.flatMap(prompt => JSON.parse(prompt.split("\n\n").at(-1)));
+  const mirroredB = chatPostsB.flatMap(prompt => JSON.parse(prompt.split("\n\n").at(-1)));
+  assert.deepEqual(mirroredA.map(message => message.text), [newHumanText, "Here is the answer."]);
+  assert.deepEqual(mirroredB.map(message => message.text), [newHumanText, "Here is the answer."]);
+  assert.deepEqual(mirroredA.map(message => message.direction), ["outgoing", "incoming"]);
+  assert.deepEqual(mirroredB.map(message => message.direction), ["incoming", "outgoing"]);
+  assert.deepEqual(mirroredA.map(message => message.message_id), mirroredB.map(message => message.message_id));
+  assert.deepEqual(mirroredA.map(message => message.display_name), ["Agent Ñandú", "Agent Beta"]);
+  assert.deepEqual(mirroredB.map(message => message.display_name), ["Agent Ñandú", "Agent Beta"]);
+  assert.equal(mirroredA[1].in_reply_to_message_id, newHuman.messageId);
+  assert.equal(mirroredB[1].in_reply_to_message_id, newHuman.messageId);
+  assert.equal((await mirrorA.mirror(panelSessionA, aliceTranscriptAfterReply._meta.transcript)).postedCount, 0);
+  assert.equal((await mirrorB.mirror(panelSessionB, bobTranscriptAfterReply._meta.transcript)).postedCount, 0);
+
+  await callTool(bob, "codex_link_panel_send", { session_id: panelSessionB, message: "A local human message is context only for this agent." });
+  const localHumanStateB = await callTool(bob, "codex_link_panel_state", { session_id: panelSessionB, panel_instance_id: panelInstanceId });
+  const localHumanB = localHumanStateB._meta.transcript.at(-1);
+  assert.equal(localHumanB.direction, "outgoing");
+  assert.equal(localHumanB.messageType, "human");
+  assert.equal((await mirrorB.mirror(panelSessionB, localHumanStateB._meta.transcript)).postedCount, 1);
+  const selfReply = await callTool(bob, "codex_link_agent_send", {
+    session_id: panelSessionB,
+    panel_instance_id: panelInstanceId,
+    in_reply_to_message_id: localHumanB.messageId,
+    message_type: "agent_ack",
+    message: "This outgoing target must not authorize a reply.",
+  });
+  assert.equal(selfReply.isError, true);
   const optedOut = await callTool(bob, "codex_link_panel_set_agent_participation", {
     session_id: panelSessionB,
     panel_instance_id: panelInstanceId,

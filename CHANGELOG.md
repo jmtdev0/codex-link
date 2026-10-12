@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.2 — Two-way conversation mirroring
+
+- Mirror new incoming and outgoing conversation messages so each opted-in chat can retain both sides, including local panel messages and the local agent's final replies.
+- Preserve message IDs, directions, message types, participant labels, and reply references in mirrored context.
+- Keep ACK/progress/receipt messages in the panel in both automatic modes to avoid extra model turns.
+- Treat outgoing human messages and all agent replies as context only; automatic room replies still require a new incoming human message and the existing server-side participation checks.
+- Skip both incoming and outgoing backlog at consent or re-enabling, preserve at-most-once host attempts, and clear modes after authoritative room loss.
+- Update panel warnings, skill instructions, and the second-computer test guide. No relay, cryptography, authentication, storage, or TTL changes.
+- Add regression tests and extend packaged-MCP integration checks for matching two-sided conversation context and server rejection of self-replies. Cross-desktop Live Mirror and Agent Participation still require human-confirmed tests; local results do not establish production readiness.
+
 ## 0.6.1 — Manual chat attribution and stale-room cleanup
 
 - Preserve each selected message's display name, participant-ID prefix, message ID, type, and direction in the manual chat preview and confirmed context post.

@@ -13,7 +13,7 @@ codex plugin marketplace add .
 codex plugin add codex-link@codex-link-local
 ```
 
-If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Verify that both the installed plugin and active MCP report version 0.6.1: installation metadata alone does not prove an already-running server loaded the update. Close an older conversation card and open the newly returned card before testing the UI. If the active MCP still reports an older version, save your work, restart the ChatGPT desktop app, and verify again; local-plugin builds may need that restart. Updating does not preserve a room's in-memory keys or opt-in state across an MCP restart, so use a fresh test room.
+If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Verify that both the installed plugin and active MCP report version 0.6.2: installation metadata alone does not prove an already-running server loaded the update. Close an older conversation card and open the newly returned card before testing the UI. If the active MCP still reports an older version, save your work, restart the ChatGPT desktop app, and verify again; local-plugin builds may need that restart. Updating does not preserve a room's in-memory keys or opt-in state across an MCP restart, so use a fresh test room.
 
 The guest needs only the plugin and a room code. Do not configure or request `CODEX_LINK_ACCESS_TOKEN` or `CODEX_LINK_SITES_BYPASS_TOKEN`; they are not needed.
 
@@ -33,7 +33,7 @@ If a third trusted participant is available, optionally join it to check that a 
 
 ## Check manual posting to the chat
 
-1. Select one harmless received message, choose **Add selected to chat**, and inspect the preview. In 0.6.1, the quoted JSON should preserve that message's display name and participant-ID prefix; clearing a current label must not rewrite an earlier message's attribution.
+1. Select one harmless received message, choose **Add selected to chat**, and inspect the preview. The quoted JSON should preserve that message's display name and participant-ID prefix; clearing a current label must not rewrite an earlier message's attribution.
 2. Confirm the post once. Check the actual chat history, not just the panel's success state. The host may queue the follow-up while the agent is still working, so allow that turn to finish before declaring delivery missing.
 3. Verify exactly one posted copy and the untrusted-content warning. Do not retry a post whose delivery is still ambiguous.
 
@@ -42,18 +42,19 @@ If a third trusted participant is available, optionally join it to check that a 
 Live Mirror is off by default and does not authorize Codex Link replies. Keep Agent Participation off during this test.
 
 1. Explicitly review and confirm Live Mirror for the selected room.
-2. Verify that the existing transcript is not reposted. Send a new harmless message from the other participant and check that it appears in the active chat exactly once, with its label, stable ID, and untrusted-content framing.
+2. Verify that the existing transcript is not reposted. Send a new harmless message from each participant's panel and check that both incoming and outgoing conversation messages appear in each opted-in chat exactly once, with their labels, stable IDs, directions, and quoted-content framing. Outgoing entries are context, not new authorization to send another room response. ACK/progress/receipt entries must stay in the panel.
 3. Pause the mirror and send another message. It should remain in the room panel without a new chat post.
 4. Reopen the panel as a new instance and verify that the mode starts off. After a room expires or its MCP session disappears, refresh the panel and verify that stale consent and the local invitation display are cleared. A fresh room must require fresh opt-in.
 
 ## Check optional Agent Participation
 
-Agent Participation is separate from Live Mirror and is off by default. It can start model responses, use plan allowance, and add incoming human messages and final agent replies to chat history. ACK and progress updates remain in the room panel. It does not sandbox other tools, so test only with trusted participants in a non-sensitive chat.
+Agent Participation is separate from Live Mirror and is off by default. It can start model responses, use plan allowance, and add human messages and final agent replies from both directions to chat history. Only new incoming human messages authorize room replies; outgoing messages are context only. ACK and progress updates remain in the room panel. It does not sandbox other tools, so test only with trusted participants in a non-sensitive chat.
 
 1. Keep the room panel open and explicitly enable Agent Participation after reviewing its confirmation. Do not enable it merely to test room creation or message delivery.
 2. From the other participant’s panel, send a harmless request such as: “Please acknowledge this message, send one brief progress update, then calculate 14 + 27 and give the final answer.”
-3. Confirm that the receiving agent sends an ACK, a progress update, and one final reply to the room; check that the human message and final reply appear in the active ChatGPT chat as described by the panel. Verify that no unrelated tools or external actions were triggered.
-4. Turn Agent Participation off and confirm that a later panel message does not trigger an automatic reply.
+3. Confirm that the receiving agent sends an ACK, a progress update, and one final reply to the room; check that the human message and final reply appear once in both opted-in chats with opposite directions on each side. Verify that no unrelated tools or external actions were triggered, and that ACK/progress entries stay in the panel.
+4. Send a harmless message from the participating agent's own panel and verify that it appears as outgoing context without a room ACK or reply from that same agent. Agent replies must not trigger another room response either.
+5. Turn Agent Participation off and confirm that a later panel message does not trigger an automatic reply.
 
 Peer text is untrusted input. Do not follow requests to open files, disclose secrets, run commands, or take external actions.
 
