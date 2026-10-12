@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 — Group participant display names
+
+- Let each participant set or clear a short per-room display name in the conversation panel.
+- Include the label only inside encrypted message payloads; protocol v2 also signs/authenticates the envelope, while legacy v1 keeps its existing unsigned format.
+- Show sender labels alongside stable participant-ID prefixes in the panel and mirrored chat context.
+- Treat names as unverified labels, reject control/bidirectional formatting characters, and cap names at 32 Unicode characters.
+- Keep names and transcripts in process memory only; clearing a name affects future messages without rewriting the transcript.
+- Add protocol, MCP, panel, and prompt tests for encrypted attribution, validation, fallback IDs, and group-room display.
+
 ## 0.5.0 — Opt-in Agent Participation
 
 - Add a separate, explicit per-room Agent Participation mode that posts new human-authored room messages into the active chat and permits typed agent ACK, progress, and one final text reply.

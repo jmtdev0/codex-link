@@ -91,6 +91,14 @@
           <select id="sessionSelect" aria-label="Select local room"></select>
           <button id="disconnectButton" class="danger" type="button">Close room</button>
         </div>
+        <section class="card" aria-label="Participant display name">
+          <div class="row">
+            <label for="displayNameInput">Your display name in this room</label>
+            <input id="displayNameInput" maxlength="128" autocomplete="nickname" placeholder="e.g. Alex or Agent Beta" />
+            <button id="saveDisplayNameButton" type="button">Save name</button>
+          </div>
+          <p class="muted">Maximum 32 Unicode characters. Your label is attached to future messages, not announced separately. Names are labels, not verified identities; they stay in this process's memory and are included only inside encrypted messages.</p>
+        </section>
         <div id="disconnectConfirm" class="card" hidden>
           <p id="disconnectPrompt"><strong>Leave or close this room?</strong> Your local key and in-memory transcript will be erased.</p>
           <div class="actions" style="margin-top:8px">
@@ -239,7 +247,7 @@
       async function initializeBridge() {
         try {
           await rpcRequest("ui/initialize", {
-            appInfo: { name: "codex-link-conversation", version: "0.5.0" },
+            appInfo: { name: "codex-link-conversation", version: "0.6.0" },
             appCapabilities: {},
             protocolVersion: "2026-01-26",
           });
@@ -290,6 +298,13 @@
         $("#liveMirrorButton").disabled = busy || !session || participating || (!enabled && !canPost);
         $("#confirmLiveMirrorButton").disabled = busy || participating || !$("#liveMirrorConsent").checked;
         updateAgentParticipationControls(session, mode, canPost);
+        updateDisplayNameControls(session);
+      }
+
+      function updateDisplayNameControls(session = currentSession()) {
+        const savedName = session?.displayName || "";
+        const proposedName = $("#displayNameInput").value.trim().normalize("NFC");
+        $("#saveDisplayNameButton").disabled = busy || !session || proposedName === savedName;
       }
 
       function updateAgentParticipationControls(session = currentSession(), mode = session ? liveMirror.getMode(session.sessionId) : null, canPost = bridgeReady || typeof window.openai?.sendFollowUpMessage === "function") {
@@ -332,10 +347,13 @@
           top.className = "message-top";
           const label = document.createElement("span");
           const messageType = String(message.messageType || "message");
-          const sender = message.direction === "outgoing"
-            ? messageType === "human" ? "You" : "Codex agent"
-            : `Participant ${String(message.senderId || "").slice(0, 8)}`;
-          const typeLabel = ({ human: "human", agent_ack: "ACK", agent_progress: "progress", agent_reply: "reply", receipt: "receipt" })[messageType] || "message";
+          const senderId = String(message.senderId || "").slice(0, 8);
+          const sender = message.displayName
+            ? `${String(message.displayName)} (${message.direction === "outgoing" ? "you" : senderId})`
+            : message.direction === "outgoing"
+              ? messageType === "human" ? "You" : "Codex agent"
+              : `Participant ${senderId}`;
+          const typeLabel = ({ human: "human", agent_ack: "agent ACK", agent_progress: "agent progress", agent_reply: "agent reply", receipt: "receipt" })[messageType] || "message";
           const time = message.receivedAt ? new Date(message.receivedAt).toLocaleString() : "";
           const recipientCount = Math.max(0, (session?.participants?.length || 1) - 1);
           const receiptCount = Array.isArray(message.acknowledgedBy) ? message.acknowledgedBy.length : (message.acknowledgedAt ? 1 : 0);
@@ -388,16 +406,28 @@
           if (activeSessions.some((session) => session.sessionId === previousId)) sessionSelect.value = previousId;
           else if (activeSessions.length) sessionSelect.value = activeSessions[activeSessions.length - 1].sessionId;
           const selected = currentSession();
+          const displayNameInput = $("#displayNameInput");
+          if (document.activeElement !== displayNameInput) displayNameInput.value = selected?.displayName || "";
           const participants = selected && Array.isArray(selected.participants) ? selected.participants : [];
           const maxParticipants = selected?.maxParticipants || 8;
-          participantSummary.textContent = selected
-            ? `Participants: ${participants.length}/${maxParticipants}${participants.length ? ` · ${participants.map((member) => String(member.participantId || "").slice(0, 8)).join(", ")}` : ""}`
-            : "";
           if (selected && meta.transcriptSessionId === selected.sessionId && Array.isArray(meta.transcript)) {
             selected.transcript = meta.transcript;
           } else if (selected) {
             selected.transcript = [];
           }
+          const observedNames = new Map((selected?.transcript || [])
+            .filter((message) => message.displayName && message.senderId)
+            .map((message) => [String(message.senderId), String(message.displayName)]));
+          const participantLabels = participants.map((member) => {
+            const participantId = String(member.participantId || "");
+            const displayName = participantId === selected?.participantId
+              ? selected.displayName
+              : observedNames.get(participantId);
+            return displayName ? `${displayName} (${participantId.slice(0, 6)})` : participantId.slice(0, 8);
+          });
+          participantSummary.textContent = selected
+            ? `Participants: ${participants.length}/${maxParticipants}${participantLabels.length ? ` · ${participantLabels.join(", ")}` : ""}`
+            : "";
           roomControls.hidden = activeSessions.length === 0;
           const session = currentSession();
           $("#roomExpiry").textContent = session ? `Expires ${new Date(session.expiresAt).toLocaleString()}` : "";
@@ -607,6 +637,29 @@
           notice.textContent = "Sent. The relay received ciphertext only.";
         } catch (error) { showError(error); }
         finally { setBusy(false); }
+      });
+
+      $("#displayNameInput").addEventListener("input", () => updateDisplayNameControls());
+      $("#saveDisplayNameButton").addEventListener("click", async () => {
+        const session = currentSession();
+        if (!session) return;
+        const displayNameInput = $("#displayNameInput");
+        displayNameInput.disabled = true;
+        setBusy(true);
+        try {
+          const result = await callTool("codex_link_panel_set_display_name", {
+            session_id: session.sessionId,
+            display_name: displayNameInput.value,
+          });
+          session.displayName = result?.structuredContent?.displayName || "";
+          displayNameInput.value = session.displayName;
+          await refreshState();
+          notice.textContent = session.displayName ? `Display name saved for ${session.displayName}.` : "Display name cleared.";
+        } catch (error) { showError(error); }
+        finally {
+          displayNameInput.disabled = false;
+          setBusy(false);
+        }
       });
 
       $("#disconnectButton").addEventListener("click", async () => {

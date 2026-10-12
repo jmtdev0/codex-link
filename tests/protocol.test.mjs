@@ -7,6 +7,7 @@ import {
   decryptMessagePayload,
   deriveRoomCapability,
   encryptMessage,
+  normalizeDisplayName,
   parseInvitation,
   randomId,
 } from "../plugin/src/protocol.mjs";
@@ -32,8 +33,9 @@ test("room capability is stable and protocol-domain-separated from the E2E secre
 test("legacy v1 AES-GCM messages remain decryptable", () => {
   const invitation = createInvitation({ version: 1 });
   const senderId = randomId();
-  const envelope = encryptMessage(invitation, senderId, "hola desde una versión anterior");
+  const envelope = encryptMessage(invitation, senderId, "hola desde una versión anterior", null, { displayName: "Cliente v1" });
   assert.equal(decryptMessage(parseInvitation(invitation.code), envelope), "hola desde una versión anterior");
+  assert.equal(decryptMessagePayload(parseInvitation(invitation.code), envelope).displayName, "Cliente v1");
 });
 
 test("v2 authenticates sender identity and encrypts message contents", () => {
@@ -62,6 +64,29 @@ test("typed agent messages and reply references are authenticated inside ciphert
     inReplyTo: replyTarget,
   });
   assert.equal(decryptMessage(invitation, envelope), "respuesta final");
+});
+
+test("participant display names are normalized, bounded, and kept inside authenticated ciphertext", () => {
+  const invitation = createInvitation();
+  const identity = createIdentity();
+  const envelope = encryptMessage(invitation, identity.participantId, "hola", identity, {
+    messageType: "human",
+    displayName: "  Agent Ñandú 🧭  ",
+  });
+  const serializedEnvelope = JSON.stringify(envelope);
+  assert.equal(serializedEnvelope.includes("Agent Ñandú"), false);
+  assert.equal(serializedEnvelope.includes("displayName"), false);
+  assert.deepEqual(decryptMessagePayload(invitation, envelope), {
+    text: "hola",
+    messageType: "human",
+    displayName: "Agent Ñandú 🧭",
+  });
+  assert.equal(normalizeDisplayName("   "), "");
+  assert.throws(() => normalizeDisplayName("x".repeat(33)), /32 characters/i);
+  assert.throws(() => normalizeDisplayName("name\nforged"), /control/i);
+  assert.throws(() => normalizeDisplayName("\u202eadmin"), /bidirectional/i);
+  assert.throws(() => normalizeDisplayName("name\u200f"), /bidirectional/i);
+  assert.throws(() => normalizeDisplayName("name\u2028other"), /control/i);
 });
 
 test("v2 rejects ciphertext, identity substitution, bad signatures, and replays", () => {

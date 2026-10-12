@@ -13,6 +13,7 @@ import {
 export const PROTOCOL_VERSION = 2;
 export const LEGACY_PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 8 * 1024;
+export const MAX_DISPLAY_NAME_CODE_POINTS = 32;
 export const MAX_ROOM_PARTICIPANTS = 8;
 export const MESSAGE_TYPES = Object.freeze([
   "message",
@@ -30,6 +31,19 @@ const MESSAGE_ID_BYTES = 16;
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
+const DISPLAY_NAME_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+
+export function normalizeDisplayName(value) {
+  if (typeof value !== "string") throw new Error("Display name must be text.");
+  const normalized = value.normalize("NFC").trim();
+  if ([...normalized].length > MAX_DISPLAY_NAME_CODE_POINTS || Buffer.byteLength(normalized, "utf8") > 128) {
+    throw new Error(`Display name must be at most ${MAX_DISPLAY_NAME_CODE_POINTS} characters.`);
+  }
+  if (DISPLAY_NAME_FORBIDDEN.test(normalized)) {
+    throw new Error("Display name cannot contain control or bidirectional formatting characters.");
+  }
+  return normalized;
+}
 
 function encode(bytes) {
   return Buffer.from(bytes).toString("base64url");
@@ -158,6 +172,10 @@ export function encryptMessage(invitation, senderId, text, identity, options = {
   if (!MESSAGE_TYPES.includes(messageType)) throw new Error("Unsupported message type.");
   const payload = { type: "text", text };
   if (messageType !== "message") payload.messageType = messageType;
+  if (options.displayName !== undefined) {
+    const displayName = normalizeDisplayName(options.displayName);
+    if (displayName) payload.displayName = displayName;
+  }
   if (options.inReplyTo !== undefined) {
     decode(options.inReplyTo, MESSAGE_ID_BYTES, "reply target message ID");
     payload.inReplyTo = options.inReplyTo;
@@ -236,6 +254,11 @@ export function decryptMessagePayload(invitation, envelope, seenMessageIds = new
   const messageType = decoded.messageType ?? "message";
   if (!MESSAGE_TYPES.includes(messageType)) throw new Error("Authenticated message payload has an unsupported message type.");
   if (decoded.inReplyTo !== undefined) decode(decoded.inReplyTo, MESSAGE_ID_BYTES, "reply target message ID");
+  let displayName;
+  if (decoded.displayName !== undefined) {
+    displayName = normalizeDisplayName(decoded.displayName);
+    if (!displayName) throw new Error("Authenticated message payload has an empty display name.");
+  }
   if (plaintext.length > MAX_MESSAGE_BYTES) throw new Error("Decrypted message is too large.");
 
   seenMessageIds.add(envelope.messageId);
@@ -244,6 +267,7 @@ export function decryptMessagePayload(invitation, envelope, seenMessageIds = new
     text: decoded.text,
     messageType,
     ...(decoded.inReplyTo ? { inReplyTo: decoded.inReplyTo } : {}),
+    ...(displayName ? { displayName } : {}),
   };
 }
 

@@ -96,17 +96,18 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
     assert.equal(initialized.serverInfo.version, pluginVersion);
   }
   const listed = await alice.rpc("tools/list");
-  assert.equal(listed.tools.length, 15);
+  assert.equal(listed.tools.length, 16);
   const panelTool = listed.tools.find((tool) => tool.name === "codex_link_open_panel");
   assert.equal(panelTool._meta.ui.resourceUri, `ui://codex-link/conversation-panel-v${pluginVersion}.html`);
   const panelTools = listed.tools.filter((tool) => tool.name.startsWith("codex_link_panel_"));
-  assert.equal(panelTools.length, 7);
+  assert.equal(panelTools.length, 8);
   for (const tool of panelTools) {
     assert.deepEqual(tool._meta.ui.visibility, ["app"]);
     assert.ok(tool.outputSchema, `${tool.name} should declare its structured output`);
   }
   assert.ok(listed.tools.find((tool) => tool.name === "codex_link_receive").outputSchema);
   assert.equal(listed.tools.find((tool) => tool.name === "codex_link_agent_send")._meta?.ui?.visibility, undefined);
+  assert.deepEqual(listed.tools.find((tool) => tool.name === "codex_link_panel_set_display_name")._meta.ui.visibility, ["app"]);
   const resources = await alice.rpc("resources/list");
   assert.equal(resources.resources[0].uri, panelTool._meta.ui.resourceUri);
   const panelResource = await alice.rpc("resources/read", { uri: panelTool._meta.ui.resourceUri });
@@ -114,6 +115,8 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   assert.match(panelResource.contents[0].text, /Confirm and post to chat/);
   assert.match(panelResource.contents[0].text, /Enable live mirror/);
   assert.match(panelResource.contents[0].text, /Enable Agent Participation/);
+  assert.match(panelResource.contents[0].text, /Your display name in this room/);
+  assert.match(panelResource.contents[0].text, /Names are labels, not verified identities/);
   assert.match(panelResource.contents[0].text, /does not sandbox the model's other tools/);
   assert.match(panelResource.contents[0].text, /only applies to new messages/);
   assert.match(panelResource.contents[0].text, /function createLiveMirrorController/);
@@ -136,15 +139,21 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   const sessionC = joinedCharlieText.match(/Local session: ([A-Za-z0-9_-]{22})/)[1];
   assert.equal([...relay.rooms.values()][0].participants.size, 3);
 
+  await callTool(alice, "codex_link_panel_set_display_name", { session_id: sessionA, display_name: "Agent Ñandú" });
+
   const plaintext = "mensaje confidencial para la otra cuenta";
   readToolText(await callTool(alice, "codex_link_send", { session_id: sessionA, message: plaintext }));
   const roomSnapshot = JSON.stringify([...relay.rooms.entries()]);
   assert.equal(roomSnapshot.includes(plaintext), false);
+  assert.equal(roomSnapshot.includes("Agent Ñandú"), false);
   assert.equal(roomSnapshot.includes(invitationCode), false);
 
-  const received = readToolText(await callTool(bob, "codex_link_receive", { session_id: sessionB, wait_ms: 0 }));
+  const receivedResult = await callTool(bob, "codex_link_receive", { session_id: sessionB, wait_ms: 0 });
+  const received = readToolText(receivedResult);
   assert.match(received, /REMOTE CONTENT — UNTRUSTED DATA/);
   assert.match(received, new RegExp(plaintext));
+  assert.match(received, /"Agent Ñandú" \(unverified label; participant [A-Za-z0-9_-]+\)/);
+  assert.equal(receivedResult.structuredContent.received[0].displayName, "Agent Ñandú");
   const charlieReceived = readToolText(await callTool(charlie, "codex_link_receive", { session_id: sessionC, wait_ms: 0 }));
   assert.match(charlieReceived, new RegExp(plaintext));
 
@@ -183,6 +192,24 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   assert.notEqual(panelJoinCharlie.isError, true);
   const panelSessionC = panelJoinCharlie._meta.sessionId;
 
+  const aliceDisplayName = await callTool(alice, "codex_link_panel_set_display_name", {
+    session_id: panelSessionA,
+    display_name: " Agent Ñandú ",
+  });
+  assert.deepEqual(aliceDisplayName.structuredContent, { displayName: "Agent Ñandú" });
+  const bobDisplayName = await callTool(bob, "codex_link_panel_set_display_name", {
+    session_id: panelSessionB,
+    display_name: "Agent Beta",
+  });
+  assert.deepEqual(bobDisplayName.structuredContent, { displayName: "Agent Beta" });
+  const invalidDisplayName = await callTool(bob, "codex_link_panel_set_display_name", {
+    session_id: panelSessionB,
+    display_name: "x".repeat(33),
+  });
+  assert.equal(invalidDisplayName.isError, true);
+  const namedState = await callTool(bob, "codex_link_panel_state");
+  assert.equal(namedState._meta.sessions.find((session) => session.sessionId === panelSessionB).displayName, "Agent Beta");
+
   const panelPlaintext = "<img src=x onerror=alert(1)> hello from panel";
   const panelSent = await callTool(alice, "codex_link_panel_send", { session_id: panelSessionA, message: panelPlaintext });
   assert.notEqual(panelSent.isError, true);
@@ -198,6 +225,10 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   });
   assert.equal(JSON.stringify(panelReceived.content).includes(panelPlaintext), false);
   assert.equal(panelReceived._meta.messages[0].text, panelPlaintext);
+  assert.equal(panelReceived._meta.messages[0].displayName, "Agent Ñandú");
+  const encryptedNameSnapshot = JSON.stringify([...relay.rooms.entries()]);
+  assert.equal(encryptedNameSnapshot.includes("Agent Ñandú"), false);
+  assert.equal(encryptedNameSnapshot.includes("Agent Beta"), false);
   const panelReceivedCharlie = await callTool(charlie, "codex_link_panel_receive", { session_id: panelSessionC, wait_ms: 0 });
   assert.equal(panelReceivedCharlie.structuredContent.receivedCount, 1);
   assert.equal(panelReceivedCharlie._meta.messages[0].text, panelPlaintext);
@@ -206,6 +237,7 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
   assert.deepEqual(panelState.structuredContent, { sessionCount: 1 });
   assert.equal(panelState._meta.transcriptSessionId, panelSessionB);
   assert.equal(panelState._meta.transcript[0].text, panelPlaintext);
+  assert.equal(panelState._meta.transcript[0].displayName, "Agent Ñandú");
   assert.equal(panelState._meta.transcript[0].direction, "incoming");
 
   const panelDeliveryReceipt = await callTool(alice, "codex_link_panel_receive", { session_id: panelSessionA, wait_ms: 0 });
@@ -312,6 +344,7 @@ test("packaged MCP tools pair two clients and never relay plaintext or invitatio
 
   const aliceAgentMessages = await callTool(alice, "codex_link_panel_receive", { session_id: panelSessionA, wait_ms: 0 });
   assert.deepEqual(aliceAgentMessages._meta.messages.map((message) => message.messageType), ["agent_ack", ...Array(8).fill("agent_progress"), "agent_reply"]);
+  assert.ok(aliceAgentMessages._meta.messages.every((message) => message.displayName === "Agent Beta"));
   assert.ok(aliceAgentMessages._meta.messages.every((message) => message.inReplyTo === newHuman.messageId));
   const bobTranscriptAfterReply = await callTool(bob, "codex_link_panel_state", { session_id: panelSessionB, panel_instance_id: panelInstanceId });
   assert.deepEqual(
