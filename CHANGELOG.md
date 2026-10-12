@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 — Signed participant controls
+
+- Correct the v2 control-authorization gap: a shared room capability and someone else's public participant ID must not authorize ACKing their queue, removing them, or closing as the owner.
+- Sign create/join/ACK/leave/close bodies with the existing in-memory Ed25519 identity, binding operation, room, actor, operation data, timestamp, and fresh nonce in a domain distinct from message signatures. Verify possession at registration and authorization before state changes.
+- Reject missing, modified, cross-operation, wrong-actor, expired, and excessively future-dated proofs. V2 clients older than 0.7.0 must update; v1 remains an unsigned legacy compatibility path.
+- Keep admission codes, E2E ciphertext, per-room consent, 24-hour rooms, five-minute message TTLs, and existing storage/limits unchanged. No private-key files, new client tokens, additional message storage, or migration are added.
+- Control proofs are short-lived, not a durable replay ledger or protection against a malicious relay deleting its own state. They must stay out of logs, message payloads, and public output.
+- Add regression tests for both relays and the proof format; retain packaged-MCP and D1 integration tests. Separate-desktop automatic-mode tests remain pending local human confirmation.
+
 ## Relay update — 24-hour rooms
 
 - Give newly created v1 and v2 rooms an absolute 24-hour lifetime in both the hosted Worker and the development relay. Existing hosted rooms keep their stored expiry; joins and traffic never renew it.

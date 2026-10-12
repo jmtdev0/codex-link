@@ -1,8 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createRoom } from "../plugin/src/relay-client.mjs";
+import { createIdentity, createInvitation, deriveRoomCapability, verifyControlProof } from "../plugin/src/protocol.mjs";
 
 const CAPABILITY = "c".repeat(43);
+
+test("v2 wire registration includes only a public control proof, never the private identity or invitation secret", async (t) => {
+  const invitation = createInvitation();
+  const identity = createIdentity();
+  const capability = deriveRoomCapability(invitation);
+  let sent;
+  t.mock.method(globalThis, "fetch", async (_url, init) => {
+    sent = init;
+    return new Response(JSON.stringify({ expiresAt: "2030-01-01T00:00:00.000Z" }), {
+      status: 201, headers: { "content-type": "application/json" },
+    });
+  });
+  await createRoom("https://relay.example.test", invitation.roomId, identity.participantId, capability, {
+    protocolVersion: 2, publicKey: identity.publicKey, identity,
+  });
+  const body = JSON.parse(sent.body);
+  assert.equal(verifyControlProof("create", invitation.roomId, body, identity.publicKey), true);
+  assert.deepEqual(Object.keys(body).sort(), ["controlProof", "participantId", "protocolVersion", "publicKey", "roomId"]);
+  assert.equal(sent.body.includes(invitation.secret), false);
+  assert.equal(sent.body.includes("privateKey"), false);
+  assert.equal(sent.body.includes("BEGIN PRIVATE KEY"), false);
+  assert.equal(sent.body.includes(capability), false);
+  assert.equal(new Headers(sent.headers).get("authorization"), `Bearer ${capability}`);
+});
 
 function saveEnvironment(keys) {
   return new Map(keys.map((key) => [key, process.env[key]]));

@@ -15,6 +15,8 @@ export const LEGACY_PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 8 * 1024;
 export const MAX_DISPLAY_NAME_CODE_POINTS = 32;
 export const MAX_ROOM_PARTICIPANTS = 8;
+export const CONTROL_PROOF_MAX_AGE_MS = 5 * 60 * 1000;
+export const CONTROL_PROOF_FUTURE_SKEW_MS = 30_000;
 export const MESSAGE_TYPES = Object.freeze([
   "message",
   "human",
@@ -100,6 +102,50 @@ export function deriveRoomCapability(invitation) {
   const roomId = decode(invitation.roomId, ROOM_ID_BYTES, "room ID");
   const info = Buffer.from(`codex-link/v${invitation.version}/relay-capability`, "utf8");
   return encode(hkdfSync("sha256", secret, roomId, info, SECRET_BYTES));
+}
+
+// Room membership alone is not authority to operate as another participant.
+// This signature domain is separate from encrypted message signatures.
+export function controlProofPayload(action, roomId, body, proof) {
+  if (!["create", "join", "acks", "leave", "close"].includes(action)) {
+    throw new Error("Unsupported room control operation.");
+  }
+  decode(roomId, ROOM_ID_BYTES, "room ID");
+  decode(body.participantId, PARTICIPANT_ID_BYTES, "participant ID");
+  const data = action === "create" || action === "join"
+    ? [body.protocolVersion, body.publicKey]
+    : action === "acks" ? [...new Set(body.messageIds)].sort() : [];
+  return Buffer.from(JSON.stringify([
+    "codex-link/control/v1", action, roomId, body.participantId,
+    data, proof.v, proof.issuedAt, proof.nonce,
+  ]), "utf8");
+}
+
+export function createControlProof(action, roomId, body, identity) {
+  if (!identity?.privateKey || identity.participantId !== body.participantId ||
+      (body.publicKey !== undefined && body.publicKey !== identity.publicKey)) {
+    throw new Error("A matching in-memory signing identity is required for room controls.");
+  }
+  const proof = { v: 1, issuedAt: Date.now(), nonce: randomId() };
+  proof.signature = encode(sign(null, controlProofPayload(action, roomId, body, proof), identity.privateKey));
+  return proof;
+}
+
+export function verifyControlProof(action, roomId, body, publicKey, now = Date.now()) {
+  try {
+    const proof = body?.controlProof;
+    if (!proof || Array.isArray(proof) || Object.keys(proof).sort().join(",") !== "issuedAt,nonce,signature,v" || proof.v !== 1 ||
+        !Number.isSafeInteger(proof.issuedAt) || now - proof.issuedAt >= CONTROL_PROOF_MAX_AGE_MS ||
+        proof.issuedAt - now > CONTROL_PROOF_FUTURE_SKEW_MS) return false;
+    decode(proof.nonce, PARTICIPANT_ID_BYTES, "control nonce");
+    const bytes = decode(publicKey, 44, "signing public key");
+    if (encode(createHash("sha256").update(bytes).digest().subarray(0, PARTICIPANT_ID_BYTES)) !== body.participantId) return false;
+    const key = createPublicKey({ key: bytes, type: "spki", format: "der" });
+    return key.asymmetricKeyType === "ed25519" && verify(null,
+      controlProofPayload(action, roomId, body, proof), key, decode(proof.signature, 64, "control signature"));
+  } catch {
+    return false;
+  }
 }
 
 function messageKey(invitation, senderId) {

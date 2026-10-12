@@ -20,7 +20,7 @@ const MAX_TRANSCRIPT_MESSAGES = 100;
 const AGENT_PARTICIPATION_LEASE_MS = 30_000;
 const MAX_AGENT_PROGRESS_MESSAGES = 8;
 const RECEIPT_PREFIX = "[[codex-link-receipt:v1]]";
-const PANEL_URI = "ui://codex-link/conversation-panel-v0.6.2.html";
+const PANEL_URI = "ui://codex-link/conversation-panel-v0.7.0.html";
 const panelTemplate = readFileSync(new URL("../ui/conversation-panel.html", import.meta.url), "utf8");
 const PANEL_HTML = panelTemplate.replace("/* CODEX_LINK_LIVE_MIRROR_HELPER */", createLiveMirrorController.toString());
 if (PANEL_HTML === panelTemplate) throw new Error("The conversation panel is missing its live-mirror helper insertion point.");
@@ -352,7 +352,7 @@ async function createLocalRoom(baseUrl) {
   const roomCapability = deriveRoomCapability(invitation);
   const created = await createRoom(baseUrl, invitation.roomId, participantId, roomCapability, {
     protocolVersion: invitation.version,
-    ...(identity ? { publicKey: identity.publicKey } : {}),
+    ...(identity ? { publicKey: identity.publicKey, identity } : {}),
   });
   const sessionId = randomId();
   sessions.set(sessionId, {
@@ -377,10 +377,10 @@ async function disconnectLocalRoom(baseUrl, sessionId) {
   sessions.delete(sessionId);
   try {
     if (session.isOwner) {
-      await closeRoom(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability);
+      await closeRoom(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability, session.identity);
       return { relayClosed: true, relayLeft: false };
     }
-    await leaveRoom(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability);
+    await leaveRoom(baseUrl, session.invitation.roomId, session.participantId, session.roomCapability, session.identity);
     return { relayClosed: false, relayLeft: true };
   } catch {
     return { relayClosed: false, relayLeft: false };
@@ -395,7 +395,7 @@ async function joinLocalRoom(baseUrl, code) {
   const roomCapability = deriveRoomCapability(invitation);
   const joined = await joinRoom(baseUrl, invitation.roomId, participantId, roomCapability, {
     protocolVersion: invitation.version,
-    ...(identity ? { publicKey: identity.publicKey } : {}),
+    ...(identity ? { publicKey: identity.publicKey, identity } : {}),
   });
   const sessionId = randomId();
   sessions.set(sessionId, {
@@ -496,6 +496,7 @@ async function receiveForSession(baseUrl, session, waitMs) {
       session.participantId,
       acknowledgements,
       session.roomCapability,
+      session.identity,
     );
   }
   return { received, rejectedCount, deliveryReceiptCount, acknowledgementFailures };
@@ -507,7 +508,7 @@ async function callTool(name, args = {}) {
   if (name === "codex_link_open_panel") {
     return {
       content: [{ type: "text", text: "Codex Link conversation panel is ready. Room messages remain in local memory until this MCP process exits." }],
-      structuredContent: { ready: true, version: "0.6.2" },
+      structuredContent: { ready: true, version: "0.7.0" },
     };
   }
 
@@ -809,7 +810,7 @@ async function handleRequest(message) {
       result: {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {}, resources: {} },
-      serverInfo: { name: "codex-link", version: "0.6.2" },
+      serverInfo: { name: "codex-link", version: "0.7.0" },
         instructions: "Encrypt all text locally. Never send invitation codes or plaintext to the relay.",
       },
     });

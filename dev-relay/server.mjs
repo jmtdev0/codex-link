@@ -2,6 +2,7 @@ import http from "node:http";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { verifyControlProof } from "../plugin/src/protocol.mjs";
 
 const ROOM_ID = /^[A-Za-z0-9_-]{22}$/;
 const PARTICIPANT_ID = /^[A-Za-z0-9_-]{22}$/;
@@ -108,6 +109,9 @@ export function createRelayServer({
             (protocolVersion === 1 && body.publicKey !== undefined)) {
           return json(response, 400, { error: "Invalid protocol version or signing identity." });
         }
+        if (protocolVersion === 2 && !verifyControlProof("create", body.roomId, body, body.publicKey)) {
+          return json(response, 403, { error: "A valid participant control signature is required. Update Codex Link." });
+        }
         if (rooms.has(body.roomId)) return json(response, 409, { error: "Room already exists." });
         const room = {
           expiresAt: Date.now() + roomTtlMs,
@@ -136,6 +140,9 @@ export function createRelayServer({
             (protocolVersion === 2 && identityParticipantId(body.publicKey) !== participantId) ||
             (protocolVersion === 1 && body.publicKey !== undefined)) {
           return json(response, 409, { error: "Invalid protocol version or signing identity for this room." });
+        }
+        if (protocolVersion === 2 && !verifyControlProof("join", roomId, body, body.publicKey)) {
+          return json(response, 403, { error: "A valid participant control signature is required. Update Codex Link." });
         }
         const existingPublicKey = room.publicKeys.get(participantId);
         if (room.participants.has(participantId) && existingPublicKey !== (body.publicKey ?? null)) {
@@ -217,6 +224,9 @@ export function createRelayServer({
         const body = await readBody(request);
         const queue = room.queues.get(body?.participantId);
         if (!queue) return json(response, 403, { error: "Participant is not in this room." });
+        if (room.protocolVersion === 2 && !verifyControlProof("acks", roomId, body, room.publicKeys.get(body.participantId))) {
+          return json(response, 403, { error: "A valid participant control signature is required. Update Codex Link." });
+        }
         const messageIds = Array.isArray(body?.messageIds) ? body.messageIds : [];
         for (const id of messageIds) if (MESSAGE_ID.test(id)) queue.delete(id);
         return json(response, 200, { acknowledged: messageIds.length });
@@ -225,6 +235,9 @@ export function createRelayServer({
       if (parts.length === 4 && parts[3] === "leave" && request.method === "POST") {
         const body = await readBody(request);
         if (!room.participants.has(body?.participantId)) return json(response, 403, { error: "Participant is not in this room." });
+        if (room.protocolVersion === 2 && !verifyControlProof("leave", roomId, body, room.publicKeys.get(body.participantId))) {
+          return json(response, 403, { error: "A valid participant control signature is required. Update Codex Link." });
+        }
         if (body.participantId === room.ownerId) {
           return json(response, 409, { error: "The room owner must close the room instead of leaving it." });
         }
@@ -239,6 +252,9 @@ export function createRelayServer({
       if (parts.length === 3 && request.method === "DELETE") {
         const body = await readBody(request);
         if (!room.participants.has(body?.participantId)) return json(response, 403, { error: "Participant is not in this room." });
+        if (room.protocolVersion === 2 && !verifyControlProof("close", roomId, body, room.publicKeys.get(body.participantId))) {
+          return json(response, 403, { error: "A valid participant control signature is required. Update Codex Link." });
+        }
         if (room.protocolVersion === 2 && body.participantId !== room.ownerId) {
           return json(response, 403, { error: "Only the room owner can close this group room. Other participants should leave." });
         }

@@ -16,6 +16,8 @@ const ROOM_RATE_WINDOW_MS = 60 * 1000;
 const MAX_WAIT_MS = 15_000;
 const WAIT_POLL_MS = 500;
 const CLEANUP_INTERVAL_MS = 10_000;
+const CONTROL_PROOF_MAX_AGE_MS = 5 * 60 * 1000;
+const CONTROL_PROOF_FUTURE_SKEW_MS = 30_000;
 
 class ClientError extends Error {
   constructor(status, message) {
@@ -70,6 +72,31 @@ async function identityParticipantId(publicKey) {
   if (encodedLength(publicKey) !== 44) return null;
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", decodeBase64Url(publicKey)));
   return encodeBase64Url(digest.slice(0, 16));
+}
+
+async function requireControlProof(action, roomId, body, publicKey) {
+  let valid = false;
+  try {
+    const proof = body?.controlProof;
+    const now = Date.now();
+    if (proof && !Array.isArray(proof) && Object.keys(proof).sort().join(",") === "issuedAt,nonce,signature,v" &&
+        proof.v === 1 && Number.isSafeInteger(proof.issuedAt) && now - proof.issuedAt < CONTROL_PROOF_MAX_AGE_MS &&
+        proof.issuedAt - now <= CONTROL_PROOF_FUTURE_SKEW_MS && encodedLength(proof.nonce) === 16 &&
+        encodedLength(proof.signature) === 64 && await identityParticipantId(publicKey) === body.participantId) {
+      const data = action === "create" || action === "join"
+        ? [body.protocolVersion, body.publicKey]
+        : action === "acks" ? [...new Set(body.messageIds)].sort() : [];
+      const payload = new TextEncoder().encode(JSON.stringify([
+        "codex-link/control/v1", action, roomId, body.participantId,
+        data, proof.v, proof.issuedAt, proof.nonce,
+      ]));
+      const key = await crypto.subtle.importKey("spki", decodeBase64Url(publicKey), { name: "Ed25519" }, false, ["verify"]);
+      valid = await crypto.subtle.verify({ name: "Ed25519" }, key, decodeBase64Url(proof.signature), payload);
+    }
+  } catch {
+    valid = false;
+  }
+  if (!valid) throw new ClientError(403, "A valid participant control signature is required. Update Codex Link.");
 }
 
 function changes(result) {
@@ -301,6 +328,7 @@ export function createSitesRelay({
           maxRoomCreatesPerIp,
           "Too many room invitations from this network. Try again later.",
         );
+        if (protocolVersion === 2) await requireControlProof("create", body.roomId, body, body.publicKey);
         const expiresAt = now + roomTtlMs;
         const capabilityHash = await sha256Hex(capability);
         await run(
@@ -363,6 +391,7 @@ export function createSitesRelay({
           throw new ClientError(400, "Legacy rooms cannot register a signing public key.");
         }
 
+        if (protocolVersion === 2) await requireControlProof("join", roomId, body, body.publicKey);
         const publicKey = body.publicKey ?? null;
         const existing = await first(
           db,
@@ -504,13 +533,15 @@ export function createSitesRelay({
       if (parts.length === 4 && parts[3] === "acks" && request.method === "POST") {
         const body = await readJson(request);
         const participants = await readParticipants(db, roomId);
-        if (!participants.some((member) => member.participantId === body?.participantId)) {
+        const participant = participants.find((member) => member.participantId === body?.participantId);
+        if (!participant) {
           return json(403, { error: "Participant is not in this room." });
         }
         const requestedIds = Array.isArray(body?.messageIds) ? body.messageIds : [];
         if (requestedIds.length > maxPending || requestedIds.some((id) => !MESSAGE_ID.test(id))) {
           throw new ClientError(400, "Invalid message IDs.");
         }
+        if (room.protocol_version === 2) await requireControlProof("acks", roomId, body, participant.publicKey);
         const messageIds = [...new Set(requestedIds)];
         if (!messageIds.length) return json(200, { acknowledged: 0 });
         const placeholders = messageIds.map(() => "?").join(", ");
@@ -529,6 +560,7 @@ export function createSitesRelay({
         const participant = (await readParticipants(db, roomId))
           .find((member) => member.participantId === body?.participantId);
         if (!participant) return json(403, { error: "Participant is not in this room." });
+        if (room.protocol_version === 2) await requireControlProof("leave", roomId, body, participant.publicKey);
         if (participant.role === "owner") return json(409, { error: "The room owner must close the room instead of leaving it." });
         await db.batch([
           db.prepare("DELETE FROM codex_link_messages WHERE room_id = ? AND recipient_id = ?")
@@ -544,9 +576,11 @@ export function createSitesRelay({
       if (parts.length === 3 && request.method === "DELETE") {
         const body = await readJson(request);
         const participants = await readParticipants(db, roomId);
-        if (!participants.some((member) => member.participantId === body?.participantId)) {
+        const participant = participants.find((member) => member.participantId === body?.participantId);
+        if (!participant) {
           return json(403, { error: "Participant is not in this room." });
         }
+        if (room.protocol_version === 2) await requireControlProof("close", roomId, body, participant.publicKey);
         if (room.protocol_version === 2 && body.participantId !== room.owner_id) {
           return json(403, { error: "Only the room owner can close this group room. Other participants should leave." });
         }

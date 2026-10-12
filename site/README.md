@@ -10,6 +10,8 @@ The Site is intended to be public so invited peers do not need account-specific 
 
 ## Stored data and retention
 
+The 0.7.0 Worker also requires participant signatures on v2 create/join/ACK/leave/close requests. A shared room capability authorizes admission, not impersonation of an existing member or owner. The Worker verifies Ed25519 using Web Crypto before state changes. Upgrade v2 clients together; older unsigned controls fail with HTTP 403. V1 remains an unsigned legacy path. Proofs stay in the control request and are not stored or broadcast; their short validity window is not a durable replay ledger. No storage migration is required. See [the relay contract](../RELAY_API.md).
+
 D1 stores room and participant routing IDs, protocol version, participant roles and public signing keys, room capability hashes, rate-limit buckets, and encrypted envelopes. It never stores private signing keys, the invitation secret, or plaintext message contents. V1 rooms permit two participants; v2 group rooms permit eight. Messages expire after five minutes and are deleted from the active queue when acknowledged or when a participant leaves. New rooms expire 24 hours after creation; joins and traffic do not extend this deadline, and existing rooms keep their originally stored expiry. Expired records are pruned opportunistically when traffic reaches the Worker.
 
 The longer room lifetime does not add persistent local identities, transcript recovery, automatic consent renewal, or additional message retention. Invitation codes remain bearer secrets and must stay out of public source, relay payloads, and logs.

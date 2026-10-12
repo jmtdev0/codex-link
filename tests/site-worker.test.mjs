@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createIdentity, createInvitation, decryptMessage, encryptMessage, parseInvitation, randomId } from "../plugin/src/protocol.mjs";
+import { createControlProof, createIdentity, createInvitation, decryptMessage, encryptMessage, parseInvitation, randomId } from "../plugin/src/protocol.mjs";
 import { createSitesRelay } from "../site/worker/index.js";
 import { createD1TestDatabase, sqliteAvailable } from "./support/d1-test-db.mjs";
 
@@ -9,7 +9,12 @@ const ROOM_CAPABILITY = "A".repeat(43);
 const TEST_IP = "192.0.2.15";
 const ORIGIN = "https://codex-link.test";
 
-function request(worker, path, { db, method = "GET", body, token = ROOM_CAPABILITY } = {}) {
+function request(worker, path, { db, method = "GET", body, token = ROOM_CAPABILITY, identity } = {}) {
+  if (identity && body) {
+    const action = path === "/v1/rooms" ? "create" : method === "DELETE" ? "close" : path.split("/").at(-1);
+    const roomId = body.roomId ?? path.split("/")[3];
+    body = { ...body, controlProof: createControlProof(action, roomId, body, identity) };
+  }
   const headers = new Headers();
   if (token) headers.set("authorization", `Bearer ${token}`);
   headers.set("cf-connecting-ip", TEST_IP);
@@ -114,7 +119,7 @@ for (const protocolVersion of [1, 2]) {
 
     try {
       const createdResponse = await request(creatorWorker, "/v1/rooms", {
-        db, method: "POST", body: { roomId: invitation.roomId, ...memberBody(owner) },
+        db, method: "POST", body: { roomId: invitation.roomId, ...memberBody(owner) }, identity: protocolVersion === 2 ? owner : undefined,
       });
       assert.equal(createdResponse.status, 201);
       const created = await createdResponse.json();
@@ -124,7 +129,7 @@ for (const protocolVersion of [1, 2]) {
       // A new Worker can accept a join after the previous 30-minute lifetime.
       simulatedNow += 31 * 60 * 1000;
       const joinedResponse = await request(joiningWorker, `/v1/rooms/${invitation.roomId}/join`, {
-        db, method: "POST", body: memberBody(peer),
+        db, method: "POST", body: memberBody(peer), identity: protocolVersion === 2 ? peer : undefined,
       });
       assert.equal(joinedResponse.status, 200);
       assert.equal((await joinedResponse.json()).expiresAt, deadline);
@@ -147,7 +152,7 @@ for (const protocolVersion of [1, 2]) {
 
       simulatedNow = createdAt + roomTtlMs - 1;
       const lateJoin = await request(joiningWorker, `/v1/rooms/${invitation.roomId}/join`, {
-        db, method: "POST", body: memberBody(protocolVersion === 1 ? peer : latePeer),
+        db, method: "POST", body: memberBody(protocolVersion === 1 ? peer : latePeer), identity: protocolVersion === 2 ? latePeer : undefined,
       });
       assert.equal(lateJoin.status, 200);
       assert.equal((await lateJoin.json()).expiresAt, deadline);
@@ -155,7 +160,7 @@ for (const protocolVersion of [1, 2]) {
       simulatedNow += 1;
       assert.equal((await request(joiningWorker, statusPath, { db })).status, 404);
       const expiredJoin = await request(creatorWorker, `/v1/rooms/${invitation.roomId}/join`, {
-        db, method: "POST", body: memberBody(peer),
+        db, method: "POST", body: memberBody(peer), identity: protocolVersion === 2 ? peer : undefined,
       });
       assert.equal(expiredJoin.status, 404);
       for (const table of ["codex_link_rooms", "codex_link_room_members", "codex_link_messages"]) {
@@ -233,6 +238,7 @@ test("v2 group rooms register self-certifying identities and fan out only cipher
       db,
       method: "POST",
       body: { roomId: invitation.roomId, participantId: alice.participantId, protocolVersion: 2, publicKey: alice.publicKey },
+      identity: alice,
     });
     assert.equal(created.status, 201);
     for (const identity of [bob, carol, ...overflowCandidates.slice(0, 5)]) {
@@ -240,6 +246,7 @@ test("v2 group rooms register self-certifying identities and fan out only cipher
         db,
         method: "POST",
         body: { participantId: identity.participantId, protocolVersion: 2, publicKey: identity.publicKey },
+        identity,
       });
       assert.equal(joined.status, 200);
     }
@@ -247,6 +254,7 @@ test("v2 group rooms register self-certifying identities and fan out only cipher
       db,
       method: "POST",
       body: { participantId: overflowCandidates[5].participantId, protocolVersion: 2, publicKey: overflowCandidates[5].publicKey },
+      identity: overflowCandidates[5],
     });
     assert.equal(overCapacity.status, 409);
 
@@ -274,12 +282,14 @@ test("v2 group rooms register self-certifying identities and fan out only cipher
       db,
       method: "DELETE",
       body: { participantId: bob.participantId },
+      identity: bob,
     });
     assert.equal(unauthorizedClose.status, 403);
     const left = await request(worker, `/v1/rooms/${invitation.roomId}/leave`, {
       db,
       method: "POST",
       body: { participantId: carol.participantId },
+      identity: carol,
     });
     assert.deepEqual(await left.json(), { left: true });
     assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_link_room_members WHERE room_id = ?").get(invitation.roomId).count, 7);

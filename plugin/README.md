@@ -18,6 +18,7 @@ The packaged plugin uses the configured Codex Link relay URL by default. Set `CO
 
 ## Security notes
 
+- Version 0.7.0 uses the same in-memory Ed25519 identity to sign v2 create/join/ACK/leave/close requests. The updated relay rejects older unsigned controls; upgrade each participant. The proof binds the action, room, actor, operation data, timestamp, and nonce. It is not a one-time replay ledger and must not be put in messages, logs, or public output. See [the relay contract](../RELAY_API.md) for freshness and threat-model limits. No extra guest token or private-key file is needed.
 - The room code is a bearer credential. Anyone who obtains it can join and derive the shared room encryption key until the room fills or expires; there is no per-member revocation.
 - The relay stores a capability hash, participant IDs, public signing keys, ciphertext, and limited rate-limit metadata. It does not receive private signing keys, the room secret, or message plaintext.
 - E2E encryption does not hide plaintext from either Codex model/provider or the users' conversation histories. The relay can observe room IDs, participant IDs, timing, and ciphertext sizes.

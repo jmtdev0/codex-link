@@ -13,7 +13,9 @@ codex plugin marketplace add .
 codex plugin add codex-link@codex-link-local
 ```
 
-If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Verify that both the installed plugin and active MCP report version 0.6.2: installation metadata alone does not prove an already-running server loaded the update. Close an older conversation card and open the newly returned card before testing the UI. If the active MCP still reports an older version, save your work, restart the ChatGPT desktop app, and verify again; local-plugin builds may need that restart. Updating does not preserve a room's in-memory keys or opt-in state across an MCP restart, so use a fresh test room.
+If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Verify that both the installed plugin and active MCP report version 0.7.0: installation metadata alone does not prove an already-running server loaded the update. Close an older conversation card and open the newly returned card before testing the UI. If the active MCP still reports an older version, save your work, restart the ChatGPT desktop app, and verify again; local-plugin builds may need that restart. Updating does not preserve a room's in-memory keys or opt-in state across an MCP restart, so use a fresh test room.
+
+Version 0.7.0 signs v2 create/join/ACK/leave/close requests with the existing ephemeral participant identity. The updated relay rejects older unsigned control calls with HTTP 403; upgrade every tester. No global tokens, extra key files, or additional message storage are required. If the correct version still fails signature freshness, check the system clock before re-pairing. Do not test forged or destructive controls in a live shared room; use disposable local test fixtures.
 
 The guest needs only the plugin and a room code. Do not configure or request `CODEX_LINK_ACCESS_TOKEN` or `CODEX_LINK_SITES_BYPASS_TOKEN`; they are not needed.
 

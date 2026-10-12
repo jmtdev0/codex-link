@@ -1,4 +1,12 @@
+import { createControlProof } from "./protocol.mjs";
+
 const DEFAULT_RELAY_URL = "https://codex-link-relay.sarda0x.chatgpt.site";
+
+function controlBody(action, roomId, body, identity, required = false) {
+  if (identity) return { ...body, controlProof: createControlProof(action, roomId, body, identity) };
+  if (required) throw new Error("A matching in-memory signing identity is required for room controls.");
+  return body;
+}
 
 function endpoint(baseUrl, path) {
   const normalized = new URL(baseUrl);
@@ -57,18 +65,18 @@ export function relayBaseUrl() {
   return url.toString().replace(/\/$/, "");
 }
 
-export function createRoom(baseUrl, roomId, participantId, roomCapability, { protocolVersion = 1, publicKey } = {}) {
+export function createRoom(baseUrl, roomId, participantId, roomCapability, { protocolVersion = 1, publicKey, identity } = {}) {
   const body = { roomId, participantId, protocolVersion };
   if (publicKey !== undefined) body.publicKey = publicKey;
-  return request(baseUrl, "/v1/rooms", { method: "POST", body, roomCapability });
+  return request(baseUrl, "/v1/rooms", { method: "POST", body: controlBody("create", roomId, body, identity, protocolVersion === 2), roomCapability });
 }
 
-export function joinRoom(baseUrl, roomId, participantId, roomCapability, { protocolVersion = 1, publicKey } = {}) {
+export function joinRoom(baseUrl, roomId, participantId, roomCapability, { protocolVersion = 1, publicKey, identity } = {}) {
   const body = { participantId, protocolVersion };
   if (publicKey !== undefined) body.publicKey = publicKey;
   return request(baseUrl, `/v1/rooms/${encodeURIComponent(roomId)}/join`, {
     method: "POST",
-    body,
+    body: controlBody("join", roomId, body, identity, protocolVersion === 2),
     roomCapability,
   });
 }
@@ -95,26 +103,26 @@ export function receiveEnvelopes(baseUrl, roomId, participantId, roomCapability,
   });
 }
 
-export function acknowledgeEnvelopes(baseUrl, roomId, participantId, messageIds, roomCapability) {
+export function acknowledgeEnvelopes(baseUrl, roomId, participantId, messageIds, roomCapability, identity) {
   return request(baseUrl, `/v1/rooms/${encodeURIComponent(roomId)}/acks`, {
     method: "POST",
-    body: { participantId, messageIds },
+    body: controlBody("acks", roomId, { participantId, messageIds }, identity),
     roomCapability,
   });
 }
 
-export function closeRoom(baseUrl, roomId, participantId, roomCapability) {
+export function closeRoom(baseUrl, roomId, participantId, roomCapability, identity) {
   return request(baseUrl, `/v1/rooms/${encodeURIComponent(roomId)}`, {
     method: "DELETE",
-    body: { participantId },
+    body: controlBody("close", roomId, { participantId }, identity),
     roomCapability,
   });
 }
 
-export function leaveRoom(baseUrl, roomId, participantId, roomCapability) {
+export function leaveRoom(baseUrl, roomId, participantId, roomCapability, identity) {
   return request(baseUrl, `/v1/rooms/${encodeURIComponent(roomId)}/leave`, {
     method: "POST",
-    body: { participantId },
+    body: controlBody("leave", roomId, { participantId }, identity),
     roomCapability,
   });
 }

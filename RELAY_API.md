@@ -14,6 +14,12 @@ The Worker requires a server-only `CODEX_LINK_RATE_LIMIT_KEY` secret for HMAC-ba
 
 ## Endpoints
 
+From plugin/relay 0.7.0 onward, protocol-v2 create, join, ACK, leave, and close bodies also contain `controlProof: { v: 1, issuedAt, nonce, signature }`. The client signs with its existing in-memory Ed25519 private key; no new guest credential is configured. Unsigned v2 controls from older clients return HTTP 403. Update every participant before testing the new relay. V1 is an explicitly unsigned legacy compatibility path.
+
+`issuedAt` is an integer Unix time in milliseconds; `nonce` is a fresh 16-byte base64url value; `signature` is a 64-byte Ed25519 signature. The UTF-8 signed payload is the JSON array `["codex-link/control/v1", action, roomId, participantId, data, 1, issuedAt, nonce]`. Actions are `create`, `join`, `acks`, `leave`, and `close`. For create/join, `data` is `[protocolVersion, publicKey]`; for ACKs it is the sorted unique message-ID array; for leave/close it is `[]`. The relay verifies the actor's registered public key, or the self-certifying key being registered at create/join, before changing state. Message signatures use a different domain and cannot authorize controls.
+
+Proofs expire at five minutes of age, allow at most 30 seconds of future clock skew, and are sent only over the control request's TLS connection. Keep system clocks synchronized. They are not stored, logged, broadcast as messages, or a one-time nonce ledger: an intercepted valid proof can authorize the same exact operation again during that window. They prevent a fellow member from substituting a public participant ID, not a malicious relay from discarding its own state. Group members still share the room encryption secret and admission capability; signatures do not establish the human's identity.
+
 | Request | Purpose | Body or query |
 | --- | --- | --- |
 | `POST /v1/rooms` | Create a temporary room; capability is stored as a hash | `{ "roomId", "participantId", "protocolVersion", "publicKey?" }`; older clients may omit `protocolVersion` for v1 |

@@ -54,13 +54,13 @@ test("default development rooms expire exactly 24 hours after creation without r
   const capability = deriveRoomCapability(invitation);
   const [owner, peer] = Array.from({ length: 2 }, () => createIdentity());
   const created = await createRoom(baseUrl, invitation.roomId, owner.participantId, capability, {
-    protocolVersion: 2, publicKey: owner.publicKey,
+    protocolVersion: 2, publicKey: owner.publicKey, identity: owner,
   });
   const deadline = new Date(createdAt + roomTtlMs).toISOString();
   assert.equal(created.expiresAt, deadline);
   simulatedNow += 31 * 60 * 1000;
   const joined = await joinRoom(baseUrl, invitation.roomId, peer.participantId, capability, {
-    protocolVersion: 2, publicKey: peer.publicKey,
+    protocolVersion: 2, publicKey: peer.publicKey, identity: peer,
   });
   assert.equal(joined.expiresAt, deadline);
   await sendEnvelope(baseUrl, encryptMessage(invitation, owner.participantId, "temporary", owner), capability);
@@ -73,7 +73,7 @@ test("default development rooms expire exactly 24 hours after creation without r
   simulatedNow += 1;
   await assert.rejects(getRoomStatus(baseUrl, invitation.roomId, owner.participantId, capability), /not found or expired/i);
   await assert.rejects(joinRoom(baseUrl, invitation.roomId, peer.participantId, capability, {
-    protocolVersion: 2, publicKey: peer.publicKey,
+    protocolVersion: 2, publicKey: peer.publicKey, identity: peer,
   }), /not found or expired/i);
   assert.equal(relay.rooms.size, 0);
 });
@@ -152,11 +152,13 @@ test("v2 group rooms authenticate senders and fan out ciphertext to every other 
   await createRoom(baseUrl, invitation.roomId, alice.participantId, capability, {
     protocolVersion: 2,
     publicKey: alice.publicKey,
+    identity: alice,
   });
   for (const identity of [bob, carol]) {
     await joinRoom(baseUrl, invitation.roomId, identity.participantId, capability, {
       protocolVersion: 2,
       publicKey: identity.publicKey,
+      identity,
     });
   }
 
@@ -184,12 +186,12 @@ test("v2 group rooms cap membership at eight while v1 stays pairwise", async (t)
   const capability = deriveRoomCapability(invitation);
   const identities = Array.from({ length: 9 }, () => createIdentity());
   const [owner, ...others] = identities;
-  await createRoom(baseUrl, invitation.roomId, owner.participantId, capability, { protocolVersion: 2, publicKey: owner.publicKey });
+  await createRoom(baseUrl, invitation.roomId, owner.participantId, capability, { protocolVersion: 2, publicKey: owner.publicKey, identity: owner });
   for (const identity of others.slice(0, 7)) {
-    await joinRoom(baseUrl, invitation.roomId, identity.participantId, capability, { protocolVersion: 2, publicKey: identity.publicKey });
+    await joinRoom(baseUrl, invitation.roomId, identity.participantId, capability, { protocolVersion: 2, publicKey: identity.publicKey, identity });
   }
   await assert.rejects(
-    joinRoom(baseUrl, invitation.roomId, others[7].participantId, capability, { protocolVersion: 2, publicKey: others[7].publicKey }),
+    joinRoom(baseUrl, invitation.roomId, others[7].participantId, capability, { protocolVersion: 2, publicKey: others[7].publicKey, identity: others[7] }),
     /maximum 8/i,
   );
 });
