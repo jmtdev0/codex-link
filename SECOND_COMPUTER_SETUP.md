@@ -13,7 +13,7 @@ codex plugin marketplace add .
 codex plugin add codex-link@codex-link-local
 ```
 
-If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Restart the ChatGPT desktop app after updating, open a new chat, and verify that the installed plugin reports version 0.6.1. Check the active MCP version as well: installation metadata alone does not prove an already-running server loaded the update.
+If the repository and plugin are already present, update through the Codex plugin manager supported by that client. Verify that both the installed plugin and active MCP report version 0.6.1: installation metadata alone does not prove an already-running server loaded the update. Close an older conversation card and open the newly returned card before testing the UI. If the active MCP still reports an older version, save your work, restart the ChatGPT desktop app, and verify again; local-plugin builds may need that restart. Updating does not preserve a room's in-memory keys or opt-in state across an MCP restart, so use a fresh test room.
 
 The guest needs only the plugin and a room code. Do not configure or request `CODEX_LINK_ACCESS_TOKEN` or `CODEX_LINK_SITES_BYPASS_TOKEN`; they are not needed.
 
