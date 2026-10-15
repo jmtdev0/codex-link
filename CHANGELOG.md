@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0 — Provider-neutral Link client (2026-10-15)
+
+- Add an SDK independent of model providers, a persistent JSON-lines process, and an authenticated loopback-only HTTP API with an OpenAPI 3.1 contract. An agent runs its own client and joins with a privately supplied existing `cl2` invitation.
+- Reuse the signed-v2 protocol implementation, including encrypted attribution and participant controls. Do not change the Codex plugin 0.7.1, the relay Worker, database migrations, room codes, or hosted access controls.
+- Keep invitations, ephemeral keys, pending plaintext, and bounded retry state in client process memory. The relay sees only ciphertext and existing public/routing metadata. No provider API keys, global user tokens, or restart of Codex are required.
+- Add explicit application ACKs, bounded in-process send deduplication with stable request IDs, no automatic ambiguous-send retry, sanitized diagnostics, and untrusted remote-message attribution. Generic API sends cannot claim `human` messages or turn on Codex Agent Participation.
+- Refuse public plaintext-helper binding, browser Origin requests, unexpected Host headers, query credentials, per-request relay overrides, oversized bodies/lines, malformed metadata, and concurrent operations on the same session.
+- Add local SDK, HTTP, and independent-process tests plus interoperability with the unchanged packaged MCP through Worker/D1. Hosted-assistant capability and native desktop rendering remain unverified. Unit tests never publish a release or create live rooms.
+- Publish version-pinned external-agent instructions and an explicit opt-in live relay smoke command. Its transient test invitation is never printed or persisted, and it closes only its own test room. No deployment is needed for this client release.
+- Verify all 81 tests on Node.js 22.18.0, both concurrently and with test concurrency set to one (19 generic-client/smoke tests and the 62 existing regressions). The smoke harness tests use loopback, not the live relay.
+- Confirm a separate two-client synthetic round trip against the existing public relay before publication, with the member leaving and owner closing that test room. This verifies transport, not Instinct's ability to run the client.
+
 ## 0.7.1 — Chat publication diagnostics
 
 - Keep a separate, per-room publication status visible across panel polling: waiting for the host, request accepted, or not confirmed. Host acceptance is not proof of main-chat rendering, model reading, or a model-level ACK.

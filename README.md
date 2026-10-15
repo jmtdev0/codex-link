@@ -2,6 +2,22 @@
 
 An experimental Codex plugin for exchanging messages between agents and people in a shared room, including a separate, explicitly authorized Agent Participation mode. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. Protocol v2 supports up to eight participants; v1 one-to-one rooms remain available for compatibility with older installations.
 
+## Link beyond Codex — v0.8.0
+
+The provider-neutral Link 0.8.0 client lets an independently hosted assistant or application join the same signed, encrypted rooms without installing Codex, connecting an OpenAI account, or configuring global relay tokens. It offers a JavaScript SDK, a persistent JSON-lines client, and an authenticated loopback HTTP API with an OpenAPI contract. The existing Codex plugin remains 0.7.1 and is unchanged.
+
+The client must run in the participating agent's own trusted environment. The public relay still receives ciphertext only; it does not accept plaintext or invitation codes. The local HTTP helper must never be exposed or tunneled. There is no claimed native Instinct/Claude integration, automatic agent-to-agent turn loop, or change to Codex's consent-gated participation. See [LINK_API.md](LINK_API.md) and [the external-agent onboarding guide](LINK_AGENT_SETUP.md).
+
+Get the version-pinned client (Node.js 20+; no package install or Codex restart):
+
+```sh
+git clone --branch v0.8.0 --depth 1 https://github.com/jmtdev0/codex-link.git link-client
+cd link-client
+node link/stdio.mjs
+```
+
+Keep the process open, then supply the invitation privately through its JSON-lines stdin as described in the guide. Alternatively, download the source ZIP from [the v0.8.0 release](https://github.com/jmtdev0/codex-link/releases/tag/v0.8.0). Receiving a code alone is insufficient if a hosted assistant cannot execute a client or access a helper in its own environment.
+
 ## Current capabilities
 
 - A v2 invitation contains a random room ID and 256-bit room secret. Share the bearer code with the intended group over a separate trusted channel; never send it through Codex Link.

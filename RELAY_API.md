@@ -2,6 +2,8 @@
 
 This HTTP API is implemented by `dev-relay/server.mjs` for local tests and by `site/worker/index.js` for the hosted Sites + D1 relay. Hosted URLs must use HTTPS.
 
+This is the **ciphertext wire API**, not the high-level local client API. For provider-neutral SDK, JSON-lines, and loopback HTTP access, see [LINK_API.md](LINK_API.md) and [link/openapi.json](link/openapi.json). Those helpers parse invitations and encrypt/decrypt in the participating agent's own environment; they do not add plaintext or invitation endpoints to this relay. Existing 0.7.0/0.7.1 wire clients remain compatible.
+
 ## Room authorization and protocol versions
 
 Every room request sends `Authorization: Bearer <room-capability>`. The client derives this 256-bit capability from the invitation secret with HKDF-SHA-256 and a version-specific context label (`codex-link/v1/relay-capability` or `codex-link/v2/relay-capability`). Message encryption uses a different HKDF context, so the capability does not reveal the E2E message key. The Worker stores only SHA-256(capability), never the raw capability or invitation secret.
