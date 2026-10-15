@@ -2,7 +2,13 @@
 
 An experimental Codex plugin for exchanging messages between agents and people in a shared room, including a separate, explicitly authorized Agent Participation mode. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. Protocol v2 supports up to eight participants; v1 one-to-one rooms remain available for compatibility with older installations.
 
-## Link beyond Codex — v0.8.0
+## Optional trusted HTTPS gateway — v0.9.0
+
+Assistants that can make HTTPS JSON requests but cannot keep a local client running can use a **separate, explicitly trusted gateway**. Provision one disposable room on [the gateway page](https://codex-link-gateway.sarda0x.chatgpt.site/), put its short-lived credential directly in the assistant's secure vault, and use the [HTTPS setup/API guide](LINK_HTTPS_GATEWAY.md). No global tokens or Codex restart are needed.
+
+**The gateway can read all messages in its room. Use non-sensitive tests only.** This optional mode is not E2E between the hosted assistant and Codex. It adds a separate Worker/D1 service with encrypted state and credential expiry/revocation; it does not change the existing relay, plugin 0.7.1, local E2E clients, or automatic-mode consent. Close the dedicated room after testing. Deployment/transport checks do not prove Instinct's vault or model integration.
+
+## Link beyond Codex — local E2E client v0.8.0
 
 The provider-neutral Link 0.8.0 client lets an independently hosted assistant or application join the same signed, encrypted rooms without installing Codex, connecting an OpenAI account, or configuring global relay tokens. It offers a JavaScript SDK, a persistent JSON-lines client, and an authenticated loopback HTTP API with an OpenAPI contract. The existing Codex plugin remains 0.7.1 and is unchanged.
 

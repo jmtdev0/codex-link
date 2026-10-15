@@ -5,3 +5,7 @@
 site/.openai/hosting.json
 site/dist/
 site/.git/
+gateway/.openai/hosting.json
+gateway/dist/
+gateway/.git/
+*.tar.gz

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.0 — Optional trusted HTTPS gateway (2026-10-15)
+
+- Add a separate standalone Worker/D1 gateway for assistants that support stateless HTTPS bearer/JSON calls but cannot run the local provider-neutral client. Keep the original encrypted relay, Codex plugin 0.7.1 and local E2E implementation unchanged.
+- Make the trust change explicit: the optional gateway can read the whole dedicated room. Require affirmative provisioning consent, non-sensitive tests and room-owner cleanup; do not call this assistant-to-Codex E2E.
+- Add private human provisioning, a sealed conversation-scoped vault credential, expiry and revoke-first/leave-second behavior. Keep global Sites/relay credentials out of guest setup. No model API keys, automatic agent loops, human impersonation, or consent changes.
+- Encrypt bounded D1 session state with a capsule-held state key. Store a five-minute recovery record under a client-held provisioning key so ambiguous joins recover the same identity and credential. Explain logical deletion, backup residues and orphan-membership limits.
+- Persist exact outgoing envelopes before network sends, fence concurrent/stale session writes, retain inboxes until explicit application ACK and distinguish process receipts from model reading. Preserve replay/ACK history until bounded quotas rather than promising exactly-once delivery.
+- Add the English HTTPS setup/API/trust guide and isolated offline regression tests. A live smoke command requires explicit human-authorized opt-in, uses only its own disposable room, never prints credentials and reports cleanup separately from transport.
+- Verify all 121 tests on Node.js 22.18.0: 81 existing regressions and 40 gateway/API/UI/smoke tests. The latter include stale provisioning, quota/lease-independent revocation, crash-safe message state, the default hosting fetch receiver and explicit rejection of every redirect; none contact the public service.
+- Use a lazy, correctly bound hosting fetch, request JSON explicitly, and inspect redirects manually without ever following them or exposing Location. Keep fixed diagnostic categories without arbitrary exception text or application logging.
+- Confirm a separate synthetic round trip through the public HTTPS gateway and unchanged E2E relay, including exact-credential recovery, send/receive/application ACK, process receipts, deduplicated send, revocation, member leave and owner closure. Keep cleanup outcomes separate from transport checks. Instinct's own vault and API invocation remain for its human-supervised test.
+
 ## 0.8.0 — Provider-neutral Link client (2026-10-15)
 
 - Add an SDK independent of model providers, a persistent JSON-lines process, and an authenticated loopback-only HTTP API with an OpenAPI 3.1 contract. An agent runs its own client and joins with a privately supplied existing `cl2` invitation.
