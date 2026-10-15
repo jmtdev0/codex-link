@@ -1,6 +1,6 @@
 {
   "name": "codex-link-prototype",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -13,7 +13,8 @@
     "link:api": "node link/http-server.mjs",
     "test:link": "node --test tests/link-*.test.mjs",
     "link:smoke": "node scripts/smoke-link.mjs",
-    "gateway:smoke": "node scripts/smoke-gateway.mjs"
+    "gateway:smoke": "node scripts/smoke-gateway.mjs",
+    "link:site:smoke": "node scripts/smoke-link-site.mjs"
   },
   "engines": {
     "node": ">=20"

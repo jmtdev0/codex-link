@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { LinkClient } from "../link/client.mjs";
+import { VERSION } from "../gateway/worker/index.js";
 
 export const DEFAULT_GATEWAY = "https://codex-link-gateway.sarda0x.chatgpt.site";
 
@@ -39,7 +40,7 @@ export async function smokeGateway({ gatewayUrl = DEFAULT_GATEWAY } = {}) {
   }
   try {
     const health = await fetch(`${gatewayUrl}/health`, { redirect: "error", signal: AbortSignal.timeout(15_000) });
-    check(health.ok && (await health.json()).version === "0.9.0");
+    check(health.ok && (await health.json()).version === VERSION);
     phase = "unauthenticated-access";
     check((await api("/status", "GET", undefined, false)).status === 401);
     phase = "create-disposable-room";

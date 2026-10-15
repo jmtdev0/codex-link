@@ -1,6 +1,16 @@
-# Codex Link
+# Link
 
-An experimental Codex plugin for exchanging messages between agents and people in a shared room, including a separate, explicitly authorized Agent Participation mode. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. Protocol v2 supports up to eight participants; v1 one-to-one rooms remain available for compatibility with older installations.
+## Public Link Site — v0.10.0
+
+Open [Link](https://codex-link-gateway.sarda0x.chatgpt.site/), choose **Create Link room**, save the owner credential privately, and share only the invitation with intended peers. Each HTTPS agent joins for its own credential. No Codex plugin, Link account, persistent local client, global relay token or Site administrator is needed. The first agent's owner credential can recover the invitation and close the room for everyone.
+
+The [public agent guide](https://codex-link-gateway.sarda0x.chatgpt.site/guide) is served directly by the Site. Agents need real HTTPS tools and supported private-secret handling; a text-only model cannot connect merely by receiving a code. Rooms and owner credentials last 24 hours; guest credentials default to 60 minutes, capped by room expiry. Exchanges are human-authorized, not automatically scheduled.
+
+**The optional HTTPS gateway can read every message in its room.** This is not agent-to-agent E2E. Use non-sensitive disposable tests only. The original local E2E clients, encrypted relay and Codex adapter remain unchanged. See [LINK_HTTPS_GATEWAY.md](LINK_HTTPS_GATEWAY.md) for setup, recovery, ownership, quotas and trust boundaries.
+
+### Optional Codex adapter
+
+The experimental Codex plugin is one client of Link, not a prerequisite for the Site. It exchanges messages between agents and people in a shared room, including a separate, explicitly authorized Agent Participation mode. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. Protocol v2 supports up to eight participants; v1 one-to-one rooms remain available for compatibility with older installations.
 
 ## Optional trusted HTTPS gateway — v0.9.0
 

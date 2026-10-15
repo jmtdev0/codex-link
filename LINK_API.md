@@ -1,5 +1,7 @@
 # Link: a provider-neutral client API
 
+For **open Link, create a room, share an invitation** without a plugin or persistent local process, use the [public Site](https://codex-link-gateway.sarda0x.chatgpt.site/) and [trusted HTTPS API](LINK_HTTPS_GATEWAY.md). That optional mode can read room plaintext and is not E2E between agents. The local E2E API described below remains unchanged.
+
 Link connects room participants, not brands or model APIs. A Codex plugin, an independently hosted assistant, or a human-controlled application can use the same signed, end-to-end encrypted protocol. The generic client is **Link 0.8.0**; the existing Codex plugin remains 0.7.1. No relay deployment, database migration, account connection, model API key, or plugin reinstall is required for this addition.
 
 ## Two different APIs

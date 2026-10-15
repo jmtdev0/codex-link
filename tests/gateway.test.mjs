@@ -143,7 +143,7 @@ async function fixture(t, options = {}) {
   const fetchRelay = async (input, init = {}) => {
     const url = new URL(input);
     if (url.origin !== RELAY || url.username || url.password || url.hash ||
-        !/^\/v1\/rooms\/[A-Za-z0-9_-]{22}\/(join|status|messages|acks|leave)$/.test(url.pathname)) {
+        !/^\/v1\/rooms(?:\/[A-Za-z0-9_-]{22}(?:\/(join|status|messages|acks|leave))?)?$/.test(url.pathname)) {
       throw new Error("Gateway tried to use a non-fixed relay target.");
     }
     assert.equal(init.redirect, "manual", "Upstream redirects must be inspected without following them.");
@@ -177,6 +177,8 @@ async function fixture(t, options = {}) {
     invitationCode: room.invitationCode, consentToPlaintextGateway: true, provisioningKey: key(), ...changes,
   });
   const provision = (body = provisionBody(), config = {}) => call("/bridge/v1/sessions", { method: "POST", body, ...config });
+  const createBody = (changes = {}) => ({ consentToPlaintextGateway: true, provisioningKey: key(), ...changes });
+  const create = (body = createBody(), config = {}) => call("/bridge/v1/rooms", { method: "POST", body, ...config });
   const send = (session, body, config = {}) => call("/bridge/v1/messages", { method: "POST", credential: session.credential, body, ...config });
   const receive = (session, config = {}) => call("/bridge/v1/receive", { method: "POST", credential: session.credential, body: {}, ...config });
   const ack = (session, messageIds, config = {}) => call("/bridge/v1/acks", { method: "POST", credential: session.credential, body: { messageIds }, ...config });
@@ -211,7 +213,7 @@ async function fixture(t, options = {}) {
       },
     };
   }
-  return { db, relayDb, relay, owner, room, invitation, env, clock, calls, worker, call, provisionBody,
+  return { db, relayDb, relay, owner, room, invitation, env, clock, calls, worker, call, provisionBody, createBody, create,
     provision, send, receive, ack, status, row, ticket, state, setState, once, gate, queued, rawPeer };
 }
 
@@ -234,14 +236,14 @@ gatewayTest("gateway D1 adapter uses its own migration, bind/first/RETURNING and
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'codex_link_%'").all().results.length, 0);
 });
 
-gatewayTest("trusted gateway advertises 0.9.0 and retains the existing 0.7.1 plugin", async t => {
+gatewayTest("trusted gateway advertises its version and retains the existing 0.7.1 plugin", async t => {
   const f = await fixture(t);
-  assert.equal(VERSION, "0.9.0");
+  assert.equal(VERSION, "0.10.0");
   assert.equal(RELAY, "https://codex-link-relay.sarda0x.chatgpt.site");
   const plugin = JSON.parse(await readFile(new URL("../plugin/.codex-plugin/plugin.json", import.meta.url), "utf8"));
   assert.equal(plugin.version, "0.7.1");
   const health = expect(await f.call("/health"));
-  assert.equal(health.version, "0.9.0");
+  assert.equal(health.version, VERSION);
   assert.equal(health.gatewayCanReadPlaintext, true);
   const session = expect(await f.provision(), 201);
   assert.equal(/^lgw1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(session.credential), true, "Sealed bearer format (redacted).");
@@ -252,7 +254,7 @@ gatewayTest("trusted gateway advertises 0.9.0 and retains the existing 0.7.1 plu
   assert.equal(Object.hasOwn(session, "invitationCode"), false);
   assert.equal(Object.hasOwn(session, "privateKey"), false);
   const status = expect(await f.status(session));
-  assert.equal(status.version, "0.9.0");
+  assert.equal(status.version, VERSION);
   assert.equal(status.participantCount, 2);
   assert.equal(status.pendingMessages, 0);
 });
@@ -1195,4 +1197,225 @@ gatewayTest("synthetic 3xx responses are categorized without following redirects
       assert.equal(logCount, 0, "Redirect URLs and bodies must not be logged.");
     }
   }
+});
+gatewayTest("public HTTPS creates a signed owner room without a plugin or global token", async t => {
+  const f = await fixture(t);
+  const session = expect(await f.create(f.createBody({ displayName: "Link host" })), 201);
+  assert.equal(session.role, "owner");
+  assert.match(session.invitationCode, /^cl2\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/);
+  assert.equal(session.expiresAt, session.roomExpiresAt);
+  assert.ok(Date.parse(session.roomExpiresAt) > f.clock.value + 23 * 60 * 60_000);
+  const status = expect(await f.status(session));
+  assert.equal(status.participantCount, 1);
+  assert.equal(status.role, "owner");
+  const inv = parseInvitation(session.invitationCode);
+  const create = f.calls.find(c => c.method === "POST" && c.url.pathname === "/v1/rooms");
+  const body = JSON.parse(create.body);
+  assert.equal(verifyControlProof("create", inv.roomId, body, f.ticket(session).identity.publicKey), true);
+  samePrivate(create.headers.get("authorization"), "Bearer " + deriveRoomCapability(inv));
+  assert.equal(JSON.stringify(f.calls).includes(inv.secret), false);
+  assert.equal(JSON.stringify(f.calls).includes(session.credential), false);
+});
+
+gatewayTest("two independent HTTPS agents exchange, ACK and reply in a web-created room", async t => {
+  const f = await fixture(t);
+  const host = expect(await f.create(), 201);
+  const guest = expect(await f.provision(f.provisionBody({ invitationCode: host.invitationCode, displayName: "Peer agent" }), { worker: f.worker() }), 201);
+  assert.equal(guest.role, "member");
+  assert.equal(Object.hasOwn(guest, "invitationCode"), false);
+  assert.equal(host.participantId === guest.participantId, false);
+  assert.equal(host.credential === guest.credential, false);
+  assert.equal(expect(await f.status(host)).participantCount, 2);
+  const sent = expect(await f.send(host, { text: "HTTP host to peer: ñ", requestId: "http-host" }), 202);
+  const received = expect(await f.receive(guest));
+  assert.equal(received.messages[0].text, "HTTP host to peer: ñ");
+  samePrivate(received.messages[0].messageId, sent.messageId);
+  expect(await f.ack(guest, [sent.messageId]));
+  const back = expect(await f.send(guest, { text: "HTTP peer reply", requestId: "http-peer", messageType: "agent_reply", inReplyTo: sent.messageId }), 202);
+  const onHost = expect(await f.receive(host));
+  assert.equal(onHost.messages[0].text, "HTTP peer reply");
+  assert.equal(onHost.messages[0].messageType, "agent_reply");
+  samePrivate(onHost.messages[0].inReplyTo, sent.messageId);
+  expect(await f.ack(host, [back.messageId]));
+  assert.equal(expect(await f.receive(host)).messages.length, 0);
+});
+
+gatewayTest("only a sealed owner credential recovers an invitation or closes the room", async t => {
+  const f = await fixture(t);
+  const host = expect(await f.create(), 201);
+  const guest = expect(await f.provision(f.provisionBody({ invitationCode: host.invitationCode })), 201);
+  const recovered = expect(await f.call("/bridge/v1/invitation", { credential: host.credential }));
+  samePrivate(recovered.invitationCode, host.invitationCode);
+  assert.equal(recovered.roomExpiresAt, host.roomExpiresAt);
+  expect(await f.call("/bridge/v1/invitation", { credential: guest.credential }), 403, "OWNER_REQUIRED");
+  expect(await f.call("/bridge/v1/room", { method: "DELETE", credential: guest.credential }), 403, "OWNER_REQUIRED");
+  assert.equal(f.row(guest).revoked_at, null);
+  expect(await f.call("/bridge/v1/invitation"), 401, "UNAUTHORIZED");
+  const close = expect(await f.call("/bridge/v1/room", { method: "DELETE", credential: host.credential }));
+  assert.equal(close.roomClosed, true);
+  assert.equal(close.revoked, true);
+  assert.equal(f.row(host).state_ciphertext, null);
+  expect(await f.status(host), 410, "SESSION_REVOKED");
+  expect(await f.status(guest), 404, "RELAY_REJECTED");
+  const again = expect(await f.call("/bridge/v1/room", { method: "DELETE", credential: host.credential }));
+  assert.equal(again.roomClosed, true);
+});
+
+gatewayTest("lost relay create response recovers the same room, owner and invitation without creating twice", async t => {
+  const f = await fixture(t, { maxCreates: 12 });
+  const body = f.createBody();
+  f.once("POST", "rooms", loseAfter);
+  expect(await f.create(body), 502, "RELAY_UNAVAILABLE");
+  const host = expect(await f.create(body, { worker: f.worker() }), 201);
+  const recovered = expect(await f.create(body, { worker: f.worker() }), 201);
+  samePrivate(recovered.credential, host.credential);
+  samePrivate(recovered.invitationCode, host.invitationCode);
+  assert.equal(recovered.expiresAt, host.expiresAt);
+  assert.equal(f.calls.filter(c => c.method === "POST" && c.url.pathname === "/v1/rooms").length, 1);
+  assert.equal(expect(await f.status(host)).participantCount, 1);
+});
+
+gatewayTest("an uncommitted create and an unchanged setup retry reuse the durable pending identity", async t => {
+  const f = await fixture(t);
+  const body = f.createBody();
+  f.once("POST", "rooms", failBefore);
+  expect(await f.create(body), 502, "RELAY_UNAVAILABLE");
+  const pending = f.db.sqlite.prepare("SELECT * FROM link_gateway_sessions WHERE provision_hash = ?").get(hash(body.provisioningKey));
+  const ticket = openTestSeal(body.provisioningKey, pending.provision_ciphertext, "link-gateway/provision/v1|" + hash(body.provisioningKey)).ticket;
+  const host = expect(await f.create(body), 201);
+  samePrivate(host.participantId, ticket.identity.participantId);
+  samePrivate(parseInvitation(host.invitationCode).roomId, ticket.invitation.roomId);
+});
+
+gatewayTest("create recovery is endpoint-bound and cannot turn a joining guest into an owner", async t => {
+  const f = await fixture(t, { maxCreates: 10 });
+  const body = f.createBody();
+  const host = expect(await f.create(body), 201);
+  expect(await f.provision(f.provisionBody({ invitationCode: host.invitationCode, provisioningKey: body.provisioningKey })), 409, "PROVISION_CONFLICT");
+  const joinedBody = f.provisionBody({ invitationCode: host.invitationCode });
+  const guest = expect(await f.provision(joinedBody), 201);
+  expect(await f.create(f.createBody({ provisioningKey: joinedBody.provisioningKey })), 409, "PROVISION_CONFLICT");
+  assert.equal(expect(await f.status(host)).participantCount, 2);
+  assert.equal(expect(await f.status(guest)).role, "member");
+});
+
+gatewayTest("create and join share the existing bounded source quota rather than allowing a new bypass", async t => {
+  const f = await fixture(t, { maxCreates: 2 });
+  const body = f.createBody();
+  const host = expect(await f.create(body), 201);
+  expect(await f.provision(f.provisionBody({ invitationCode: host.invitationCode })), 201);
+  expect(await f.create(body), 429, "RATE_LIMIT");
+  const closed = expect(await f.call("/bridge/v1/room", { method: "DELETE", credential: host.credential }));
+  assert.equal(closed.roomClosed, true);
+});
+
+gatewayTest("owner close bypasses ordinary quotas, a held lease and corrupt inbox state", async t => {
+  const f = await fixture(t, { maxRequests: 0, maxIngress: 0 });
+  const host = expect(await f.create(), 201);
+  f.db.sqlite.prepare("UPDATE link_gateway_sessions SET lease_nonce = ?, lease_until = ?, state_ciphertext = ? WHERE session_id = ?")
+    .run("occupied", f.clock.value + 60_000, "synthetic corrupt state", host.sessionId);
+  const closed = expect(await f.call("/bridge/v1/room", { method: "DELETE", credential: host.credential }));
+  assert.equal(closed.roomClosed, true);
+  assert.equal(f.row(host).state_ciphertext, null);
+  assert.equal(f.row(host).lease_nonce, null);
+});
+
+gatewayTest("lost close response can be retried with the same revoked owner credential", async t => {
+  const f = await fixture(t);
+  const host = expect(await f.create(), 201);
+  f.once("DELETE", parseInvitation(host.invitationCode).roomId, loseAfter);
+  const first = expect(await f.call("/bridge/v1/room", { method: "DELETE", credential: host.credential }));
+  assert.equal(first.revoked, true);
+  assert.equal(first.roomClosed, false);
+  expect(await f.status(host), 410, "SESSION_REVOKED");
+  const repeated = expect(await f.call("/bridge/v1/room", { method: "DELETE", credential: host.credential }));
+  assert.equal(repeated.roomClosed, true);
+});
+
+gatewayTest("ordinary owner revocation does not silently close a room; explicit owner close remains possible", async t => {
+  const f = await fixture(t);
+  const host = expect(await f.create(), 201);
+  const revoked = expect(await f.call("/bridge/v1/session", { method: "DELETE", credential: host.credential }));
+  assert.equal(revoked.roomClosed, false);
+  assert.equal(revoked.ownerRoomClosureRequired, true);
+  expect(await f.call("/bridge/v1/invitation", { credential: host.credential }), 410, "SESSION_REVOKED");
+  const closed = expect(await f.call("/bridge/v1/room", { method: "DELETE", credential: host.credential }));
+  assert.equal(closed.roomClosed, true);
+});
+
+gatewayTest("creation fields cannot select a relay, existing room, TTL or plaintext storage", async t => {
+  const f = await fixture(t, { maxCreates: 16 });
+  for (const extra of [{ invitationCode: f.room.invitationCode }, { ttlMinutes: 60 }, { relayUrl: "https://invalid.example.test" }, { roomId: randomId() }, { role: "owner" }]) {
+    expect(await f.create(f.createBody(extra)), 400, "INVALID_INPUT");
+  }
+  expect(await f.create(f.createBody({ consentToPlaintextGateway: false })), 400, "CONSENT_REQUIRED");
+  assert.equal(f.calls.length, 0);
+  expect(await f.create(f.createBody(), { headers: { origin: "https://unapproved.example.test" } }), 403, "ORIGIN_REJECTED");
+});
+
+gatewayTest("owner invitations and credentials are absent from D1 plaintext and relay requests", async t => {
+  const f = await fixture(t);
+  const body = f.createBody({ displayName: "Synthetic private owner label" });
+  const host = expect(await f.create(body), 201);
+  const ticket = f.ticket(host);
+  const stored = JSON.stringify({
+    sessions: f.db.sqlite.prepare("SELECT * FROM link_gateway_sessions").all(),
+    limits: f.db.sqlite.prepare("SELECT * FROM link_gateway_limits").all(),
+  });
+  for (const value of [body.displayName, host.invitationCode, host.credential, body.provisioningKey,
+    ticket.invitation.secret, ticket.identity.privateKey, ticket.stateKey, f.env.LINK_GATEWAY_MASTER_KEY]) {
+    assert.equal(stored.includes(value), false, "D1 must not contain plaintext private test fields (redacted).");
+  }
+  assert.equal(JSON.stringify(f.calls).includes(host.invitationCode), false);
+  assert.equal(JSON.stringify(f.calls).includes(ticket.invitation.secret), false);
+});
+
+gatewayTest("web-created rooms retain the same eight-member capacity", async t => {
+  const f = await fixture(t, { maxCreates: 20 });
+  const host = expect(await f.create(), 201);
+  for (let i = 0; i < 7; i++) expect(await f.provision(f.provisionBody({ invitationCode: host.invitationCode })), 201);
+  assert.equal(expect(await f.status(host)).participantCount, 8);
+  expect(await f.provision(f.provisionBody({ invitationCode: host.invitationCode })), 409, "RELAY_REJECTED");
+});
+
+gatewayTest("the public agent guide is available without credentials or storage and contains no live secrets", async t => {
+  const f = await fixture(t);
+  const response = await f.worker().fetch(new Request(GATEWAY + "/guide"));
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/plain/);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const text = await response.text();
+  assert.match(text, /POST \/rooms/);
+  assert.match(text, /POST \/sessions/);
+  assert.match(text, /DELETE \/room/);
+  assert.match(text, /No Codex plugin/);
+  assert.match(text, /not permission/);
+  assert.equal(/cl2\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/.test(text), false);
+});
+gatewayTest("expired pending owner recovery cannot silently create another room with the same setup key", async t => {
+  const f = await fixture(t);
+  const body = f.createBody();
+  f.once("POST", "rooms", loseAfter);
+  expect(await f.create(body), 502, "RELAY_UNAVAILABLE");
+  f.clock.value += 5 * 60_000 + 1;
+  expect(await f.create(body), 409, "PROVISION_CONFLICT");
+  assert.equal(f.calls.filter(c => c.method === "POST" && c.url.pathname === "/v1/rooms").length, 1);
+  const row = f.db.sqlite.prepare("SELECT * FROM link_gateway_sessions WHERE provision_hash = ?").get(hash(body.provisioningKey));
+  assert.equal(row.provision_ciphertext, null, "Recovery plaintext access expires, but its bounded tombstone remains.");
+  assert.ok(row.expires_at > f.clock.value);
+});
+
+gatewayTest("legacy v0.9 guest capsules without owner metadata remain usable but cannot obtain owner privileges", async t => {
+  const f = await fixture(t);
+  const guest = expect(await f.provision(), 201);
+  const legacyTicket = f.ticket(guest);
+  delete legacyTicket.roomRole; delete legacyTicket.roomExpiresAt;
+  const legacyCredential = "lgw1." + sealTestValue(f.env.LINK_GATEWAY_MASTER_KEY, legacyTicket, "link-gateway/capsule/v1");
+  f.db.sqlite.prepare("UPDATE link_gateway_sessions SET token_hash = ? WHERE session_id = ?").run(hash(legacyCredential), guest.sessionId);
+  const legacy = { ...guest, credential: legacyCredential };
+  const status = expect(await f.status(legacy));
+  assert.equal(status.role, "member");
+  assert.equal(status.participantCount, 2);
+  expect(await f.call("/bridge/v1/invitation", { credential: legacyCredential }), 403, "OWNER_REQUIRED");
+  expect(await f.call("/bridge/v1/room", { method: "DELETE", credential: legacyCredential }), 403, "OWNER_REQUIRED");
 });

@@ -1,4 +1,8 @@
-# Optional trusted HTTPS gateway
+# Link Site and optional trusted HTTPS gateway
+
+Version 0.10.0 lets an anonymous human or authorized HTTPS agent create a room, recover its invitation and close it with an owner credential. Each invited agent obtains its own credential. It requires neither the Codex plugin nor Site administration. The public `/guide` is served from this Worker; no credentials or invitations are embedded in it.
+
+Owner sessions expire with their 24-hour room. Existing guest sessions and v0.9.0 recovery fingerprints remain compatible. The new create/join paths share the original provisioning quota; owner cleanup bypasses ordinary quotas and leases. No migration or master-key rotation is needed. The original E2E implementation and ciphertext relay are unchanged.
 
 This source is independent of `site/`, `plugin/` and the local E2E client. It is a trusted plaintext compatibility endpoint, **not** a new public plaintext route on the ciphertext relay.
 

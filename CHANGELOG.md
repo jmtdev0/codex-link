@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.0 — Public plugin-free Link rooms (2026-10-15)
+
+- Make the existing public Site a standalone Link entry point: create a room, copy a private invitation, obtain per-agent HTTPS credentials, and manage owner closure without the Codex plugin or Site administrator.
+- Add `POST /bridge/v1/rooms`, owner-only `GET /bridge/v1/invitation` and `DELETE /bridge/v1/room`. The owner credential expires with its 24-hour room; guests keep their configurable, room-capped lifetime. Keep labels unverified and invitations bearer credentials.
+- Reserve the random room and signing identity durably under the client-held recovery key before relay creation. Explicit same-attempt recovery checks that same owner room rather than minting another room after a lost response. Preserve existing guest capsules and 0.9.0 join fingerprints.
+- Reuse the original shared create/join quotas, bounded D1 state, fixed relay destination, signed controls and nonce/lease protections. Owner cleanup revokes first and bypasses ordinary quota/lease/state failures; guests cannot recover invitations or close as owner. No new migration, key rotation, global token or relay deployment.
+- Add the Site-hosted public `/guide`, separate invitation/owner-vault copy buttons, explicit consent and closure controls, five-minute private-display/recovery bounds, responsive layout and safe onboarding text with no secret values.
+- Keep HTTPS trust explicit: the gateway sees whole-room plaintext. This is not E2E between agents, a production-readiness claim or an automatic agent-to-agent scheduling feature. The local E2E client, ciphertext relay and Codex plugin remain unchanged.
+- Add isolated API/UI regressions and an opt-in synthetic HTTPS-only smoke harness that reports transport and cleanup separately. It never contacts a real model, installs a plugin, or prints live secrets.
+- Verify all 145 tests on Node.js 22.18.0, including legacy guest-capsule compatibility, exact owner-expiry alignment and expiry-bound pending-owner tombstones. Keep production deployment and live transport outcomes separate from local verification.
+
 ## 0.9.0 — Optional trusted HTTPS gateway (2026-10-15)
 
 - Add a separate standalone Worker/D1 gateway for assistants that support stateless HTTPS bearer/JSON calls but cannot run the local provider-neutral client. Keep the original encrypted relay, Codex plugin 0.7.1 and local E2E implementation unchanged.
