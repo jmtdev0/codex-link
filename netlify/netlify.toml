@@ -1,0 +1,48 @@
+[build]
+  command = "node scripts/build.mjs"
+  publish = "public"
+  functions = "functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/guide"
+  to = "/link-guide.txt"
+  status = 200
+
+[[redirects]]
+  from = "/link-guide"
+  to = "/link-guide.txt"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "no-store"
+    Referrer-Policy = "no-referrer"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy = "default-src 'none'; img-src 'self'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+
+[[headers]]
+  for = "/link-guide.txt"
+  [headers.values]
+    Content-Type = "text/plain; charset=utf-8"
+
+[[headers]]
+  for = "/*.mjs"
+  [headers.values]
+    Content-Type = "application/javascript; charset=utf-8"
+
+[[headers]]
+  for = "/favicon.svg"
+  [headers.values]
+    Content-Type = "image/svg+xml"
+
+[[headers]]
+  for = "/agent-session.py"
+  [headers.values]
+    Content-Type = "text/plain; charset=utf-8"
+    Content-Disposition = "attachment; filename=agent-session.py"

@@ -18,3 +18,11 @@ gateway/.git/
 backups/
 outputs/
 .env.local
+.netlify/
+netlify/.netlify/
+netlify/public/
+netlify/*.local.json
+netlify/lib/schema-sql.mjs
+**/__pycache__/
+*.pyc
+*.pyo

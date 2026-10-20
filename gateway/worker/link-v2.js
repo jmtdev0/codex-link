@@ -1,6 +1,7 @@
 // Provider-neutral durable HTTPS mode. This service CAN read its room contents.
 // It neither joins nor changes the independent signed E2E relay rooms.
-export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates = 12, maxIngress = 240, maxRequests = 180, maxWaitMs = 25000, pollMs = 1000 } = {}) {
+export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates = 12, maxIngress = 240, maxRequests = 180, maxWaitMs = 25000, pollMs = 1000,
+  sourceAddress = request => request.headers.get("cf-connecting-ip") } = {}) {
   const enc = new TextEncoder(), dec = new TextDecoder();
   const ID = /^[A-Za-z0-9_-]{22}$/, TOKEN = /^lks2\.[A-Za-z0-9_-]{43}$/;
   const RID = /^[A-Za-z0-9_-]{1,80}$/, COOKIE = "__Host-link-session-v2";
@@ -233,7 +234,7 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
       if (request.method === "GET" && url.pathname === "/link/v1/info") return json(200, { api: "Link durable HTTPS", version: "0.13.0", gatewayCanReadPlaintext: true, maxWaitMs, ttlHours: MAX_TTL_MINUTES / 60, defaultTtlMinutes: 1440, maxTtlMinutes: MAX_TTL_MINUTES, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, historyOnJoin: true, resumable: true });
       if (!env.DB?.prepare || !env.DB?.batch || typeof env.LINK_GATEWAY_MASTER_KEY !== "string") fail(503, "NOT_CONFIGURED", "Durable Link storage is unavailable.");
       unb64(env.LINK_GATEWAY_MASTER_KEY, 32);
-      const ip = request.headers.get("cf-connecting-ip"); if (!ip || ip.length > 128) fail(503, "RATE_PROTECTION_UNAVAILABLE", "Source rate protection is unavailable.");
+      const ip = sourceAddress(request, env); if (typeof ip !== "string" || !ip || ip.length > 128) fail(503, "RATE_PROTECTION_UNAVAILABLE", "Source rate protection is unavailable.");
       const source = b64(await derive(env, ip, "source-rate"));
       await rate(env.DB, "link2:ingress:" + source, maxIngress); await cleanup(env);
       if (request.method === "POST" && url.pathname === "/link/v1/identity") { fields(await body(request), []); await rate(env.DB, "link2:identity:" + source, maxCreates, 600000); return json(201, { credential: "lks2." + random(32), storePrivately: true }); }
