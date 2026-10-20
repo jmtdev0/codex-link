@@ -4,7 +4,7 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
   const enc = new TextEncoder(), dec = new TextDecoder();
   const ID = /^[A-Za-z0-9_-]{22}$/, TOKEN = /^lks2\.[A-Za-z0-9_-]{43}$/;
   const RID = /^[A-Za-z0-9_-]{1,80}$/, COOKIE = "__Host-link-session-v2";
-  const TTL = 86400000, MAX_MESSAGES = 512, MAX_BYTES = 1048576, BATCH = 50;
+  const RATE_RETENTION = 86400000, MAX_TTL_MINUTES = 20160, MAX_MESSAGES = 2000, MAX_BYTES = 1048576, BATCH = 50;
   const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-frame-options": "DENY", vary: "authorization, cookie" };
   class LinkFault extends Error { constructor(status, code, message) { super(message); Object.assign(this, { status, code }); } }
   function fail(status, code, message) { throw new LinkFault(status, code, message); }
@@ -68,7 +68,7 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
     await env.DB.batch([
       env.DB.prepare("DELETE FROM link_rooms_v2 WHERE expires_at <= ?").bind(now()),
       env.DB.prepare("DELETE FROM link_waiters_v2 WHERE expires_at <= ?").bind(now()),
-      env.DB.prepare("DELETE FROM link_gateway_limits WHERE window_started_at <= ?").bind(now() - TTL),
+      env.DB.prepare("DELETE FROM link_gateway_limits WHERE window_started_at <= ?").bind(now() - RATE_RETENTION),
     ]);
   }
   function token(request, url, allowCookie = true) {
@@ -107,7 +107,7 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
     fields(input, creating ? ["name", "ttlMinutes", "consentToPlaintextGateway"] : ["invitation", "name", "consentToPlaintextGateway"], creating ? ["consentToPlaintextGateway"] : ["invitation", "consentToPlaintextGateway"]);
     if (input.consentToPlaintextGateway !== true) fail(400, "CONSENT_REQUIRED", "Each participant must authorize this readable HTTPS gateway once when joining.");
     const display = name(input.name), ttl = input.ttlMinutes ?? 1440;
-    if (!Number.isInteger(ttl) || ttl < 1 || ttl > 1440) invalid();
+    if (!Number.isInteger(ttl) || ttl < 1 || ttl > MAX_TTL_MINUTES) invalid();
     const match = !creating && /^link2\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})$/.exec(input.invitation);
     if (!creating && !match) invalid();
     if (match) { unb64(match[1], 16); unb64(match[2], 32); }
@@ -230,7 +230,7 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
       const url = new URL(request.url);
       if (url.protocol !== "https:" || url.search || url.hash || url.username || url.password) fail(400, "HTTPS_REQUIRED", "Use HTTPS without URL credentials or query parameters.");
       if (request.headers.get("origin") && request.headers.get("origin") !== url.origin || request.headers.get("sec-fetch-site") === "cross-site") fail(403, "ORIGIN_REJECTED", "Cross-origin browser access is not allowed.");
-      if (request.method === "GET" && url.pathname === "/link/v1/info") return json(200, { api: "Link durable HTTPS", version: "0.12.0", gatewayCanReadPlaintext: true, maxWaitMs, ttlHours: 24, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, historyOnJoin: true, resumable: true });
+      if (request.method === "GET" && url.pathname === "/link/v1/info") return json(200, { api: "Link durable HTTPS", version: "0.13.0", gatewayCanReadPlaintext: true, maxWaitMs, ttlHours: MAX_TTL_MINUTES / 60, defaultTtlMinutes: 1440, maxTtlMinutes: MAX_TTL_MINUTES, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, historyOnJoin: true, resumable: true });
       if (!env.DB?.prepare || !env.DB?.batch || typeof env.LINK_GATEWAY_MASTER_KEY !== "string") fail(503, "NOT_CONFIGURED", "Durable Link storage is unavailable.");
       unb64(env.LINK_GATEWAY_MASTER_KEY, 32);
       const ip = request.headers.get("cf-connecting-ip"); if (!ip || ip.length > 128) fail(503, "RATE_PROTECTION_UNAVAILABLE", "Source rate protection is unavailable.");

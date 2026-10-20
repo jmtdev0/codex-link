@@ -113,6 +113,54 @@ test("absolute room expiry revokes access and removes durable content on subsequ
   assert.equal(f.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM link_deliveries_v2").get().n, 0);
 });
 
+test("fourteen-day rooms share one deadline with late members, cookies and retained messages", async t => {
+  const f = fixture(t), owner = await f.create({ ttlMinutes: 20160 });
+  const started = Date.parse(owner.serverTime), deadline = started + 14 * 86400000;
+  assert.equal(Date.parse(owner.expiresAt), deadline);
+  assert.match(owner.response.headers.get("set-cookie"), /Max-Age=1209600(?:;|$)/);
+  assert.equal((await f.send(owner, "Available throughout this synthetic room", "long-lived")).status, 202);
+  f.advance(13 * 86400000); f.restart();
+  const resumed = await f.call("/session", { credential: owner.credential });
+  assert.equal(resumed.status, 200); assert.equal(resumed.data.expiresAt, owner.expiresAt);
+  const peer = await f.join(owner);
+  assert.equal(peer.expiresAt, owner.expiresAt);
+  assert.equal((await f.receive(peer)).data.messages[0].text, "Available throughout this synthetic room");
+  assert.equal((await f.send(peer, "A reply on day thirteen", "late-reply")).status, 202);
+  assert.equal((await f.call("/session", { credential: peer.credential })).data.expiresAt, owner.expiresAt);
+  f.advance(86400000);
+  assert.ok([401, 410].includes((await f.receive(peer)).status));
+  assert.ok([401, 410].includes((await f.call("/session", { credential: owner.credential })).status));
+  assert.equal(f.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM link_rooms_v2").get().n, 0);
+  assert.equal(f.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM link_messages_v2").get().n, 0);
+  assert.equal(f.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM link_participants_v2").get().n, 0);
+});
+
+test("published limits allow up to fourteen days but reject invalid room lifetimes", async t => {
+  const f = fixture(t), info = await f.call("/info");
+  assert.equal(info.status, 200);
+  assert.equal(info.data.version, "0.13.0"); assert.equal(info.data.maxTtlMinutes, 20160);
+  assert.equal(info.data.defaultTtlMinutes, 1440); assert.equal(info.data.ttlHours, 336);
+  assert.equal(info.data.maxMessages, 2000); assert.equal(info.data.maxRoomBytes, 1048576);
+  for (const ttlMinutes of [0, -1, 20161, 1.5, "20160"]) {
+    const result = await f.call("/rooms", { method: "POST", credential: secret(), json: { ttlMinutes, consentToPlaintextGateway: true } });
+    assert.equal(result.status, 400);
+  }
+  assert.equal(f.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM link_rooms_v2").get().n, 0);
+});
+
+test("the twenty-four-hour default and existing absolute expiry are not extended by a new maximum", async t => {
+  const f = fixture(t), owner = await f.create(), longer = await f.create({ ttlMinutes: 20160 });
+  assert.equal(Date.parse(owner.expiresAt) - Date.parse(owner.serverTime), 86400000);
+  f.advance(23 * 3600000); f.restart();
+  const repeated = await f.create({}, owner.credential);
+  assert.equal(repeated.roomId, owner.roomId); assert.equal(repeated.expiresAt, owner.expiresAt);
+  assert.equal((await f.call("/session", { credential: owner.credential })).data.expiresAt, owner.expiresAt);
+  f.advance(3600000);
+  assert.ok([401, 410].includes((await f.call("/session", { credential: owner.credential })).status));
+  assert.equal((await f.call("/session", { credential: longer.credential })).data.expiresAt, longer.expiresAt);
+  assert.equal(f.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM link_rooms_v2").get().n, 1);
+});
+
 test("stored messages, names, invitations and credentials do not appear in plaintext database rows", async t => {
   const f = fixture(t), owner = await f.create({ name: "PRIVATE_NAME_CANARY" });
   await f.send(owner, "PRIVATE_BODY_CANARY", "encrypted-1");
@@ -171,10 +219,18 @@ test("room-local sequence numbers do not expose other rooms' activity", async t 
 
 test("storage bounds reject new sends without dropping or rejecting an accepted retry", async t => {
   const f = fixture(t), owner = await f.create();
-  for (let i = 0; i < 512; i++) assert.equal((await f.send(owner, "Bounded", "cap-" + i)).status, 202);
+  for (let i = 0; i < 2000; i++) assert.equal((await f.send(owner, "Bounded", "cap-" + i)).status, 202);
   assert.equal((await f.send(owner, "One too many", "over-cap")).status, 429);
   assert.equal((await f.send(owner, "Bounded", "cap-0")).status, 202);
-  assert.equal(f.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM link_messages_v2").get().n, 512);
+  assert.equal(f.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM link_messages_v2").get().n, 2000);
+  let cursor = 0, pages = 0, replayed = 0;
+  do {
+    const page = await f.call("/conversation", { method: "POST", credential: owner.credential, json: { cursor } });
+    assert.equal(page.status, 200);
+    pages++; replayed += page.data.messages.length; cursor = page.data.nextCursor;
+    if (!page.data.more) break;
+  } while (pages < 41);
+  assert.equal(pages, 40); assert.equal(replayed, 2000); assert.equal(cursor, 2000);
   const other = await f.create(); const text = "a".repeat(8192);
   for (let i = 0; i < 128; i++) assert.equal((await f.send(other, text, "bytes-" + i)).status, 202);
   assert.equal((await f.send(other, "Full", "bytes-over")).status, 429);

@@ -3,7 +3,7 @@
 import { createDurableLink } from "./link-v2.js";
 import { createLinkClient } from "./link-client.js";
 import { durableLanding, durableBrowserClient, durableGuide, durableOpenAPI } from "./link-pages.js";
-export const VERSION = "0.12.0";
+export const VERSION = "0.13.0";
 export const RELAY = "https://codex-link-relay.sarda0x.chatgpt.site";
 const FAVICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><title>Link</title><rect width="32" height="32" rx="8" fill="#8ed9c4"/><path d="M7 16h18M12 11l-5 5 5 5M20 11l5 5-5 5" fill="none" stroke="#10221d" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const FAVICON_LINK = '<link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any">';

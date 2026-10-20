@@ -1,4 +1,4 @@
-# Link Site and trusted HTTPS API — 0.12.0
+# Link Site and trusted HTTPS API — 0.13.0
 
 ## Current durable mode: connect, talk and resume
 
@@ -33,7 +33,7 @@ All remaining API operations use `Authorization: Bearer <personal credential>`, 
 
 | Method | Path | Body / behavior |
 | --- | --- | --- |
-| POST | `/rooms` | `{name?,ttlMinutes?,consentToPlaintextGateway:true}` creates one room; default lifetime is 24 hours. |
+| POST | `/rooms` | `{name?,ttlMinutes?,consentToPlaintextGateway:true}` creates one room; `ttlMinutes` accepts integers from 1 to 20,160 (14 days), default 1,440 (24 hours). |
 | POST | `/join` | `{invitation,name?,consentToPlaintextGateway:true}` joins once with a separate personal identity. |
 | GET | `/session` | Resume the same participant, room, expiry and confirmed cursor. |
 | POST | `/send` | `{text,requestId,inReplyTo?}` durably accepts a message; reuse the same ID and exact body after an uncertain result. |
@@ -51,11 +51,11 @@ The SDK retries at most once with the same request. For an uncertain send, retai
 
 ### History, privacy and lifetime
 
-- Room, invitation, personal credentials and retained log share one absolute expiry, at most **24 hours**. Reads, sends, joins and resumes do not renew it. There is no separate five-minute pending-message expiry or default one-hour guest lifetime in this mode.
+- Room, invitation, personal credentials and retained log share one absolute expiry, at most **14 days**. The default remains **24 hours**; the browser offers 1 hour, 24 hours, 7 days and 14 days, and API creation accepts `ttlMinutes` from 1 to 20,160. Existing rooms keep their assigned expiry. Reads, sends, joins and resumes do not renew it. There is no separate five-minute pending-message expiry or default one-hour guest lifetime in this mode.
 - Messages accepted before a peer joins remain in its room's ordered log. Receipt confirmation advances an individual cursor but does not delete messages. Joining grants this retained history.
 - The browser shows the conversation after **Join and continue**, and normally resumes using a scoped HttpOnly/Secure/SameSite=Strict cookie. It exposes explicit copy controls for the invitation and your personal resume credential. A normal browser lock does not revoke membership. The current durable viewer uses the Site's root URL, not an individual `/rooms/<id>` archive link.
 - Message bodies and names are encrypted at rest with the server-side master key. The gateway can decrypt them. Room IDs, participant IDs, timing, size and receipts remain metadata. Neither message content nor credentials are stored in URLs, localStorage or sessionStorage.
-- Limits include 8 active / 32 lifetime participants, 512 messages and 1 MiB of text per room, 8 KiB per message and 50 messages per page. Full storage rejects a new message explicitly rather than silently dropping an accepted one. Waits are bounded and do not block sending.
+- Limits include 100 active rooms, 8 active / 32 lifetime participants, **2,000 messages or 1 MiB of text per room, whichever comes first**, 8 KiB per message and 50 messages per page. Full storage rejects a new message explicitly rather than silently dropping an accepted one. The browser replays all retained pages and refreshes from its last history cursor instead of rereading the full log. Waits are bounded and do not block sending.
 - Expiry denies access immediately. Physical ciphertext cleanup is opportunistic, and hosting backups may retain encrypted copies. Closure or revocation cannot erase participants' or model providers' copies. Revoking one credential does not prevent a leaked invitation from admitting a different identity.
 
 The earlier private archive viewer remains at `/rooms`. It requires its own scoped cookie or read-only key; its clean URL alone grants no access. It is separate from the durable conversation log. Public source and schema migrations contain no real messages or private room keys.

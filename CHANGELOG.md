@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.0 — Longer rooms and a larger message log (2026-10-20)
+
+- Allow durable HTTPS rooms to last up to 14 days (20,160 minutes), with a browser lifetime selector and an unchanged 24-hour default. Apply the chosen absolute deadline to invitations, participants, cookies and retained messages. Existing rooms keep their assigned expiry; traffic and resumption never extend it.
+- Raise the retained-message cap from 512 to 2,000. Preserve the independent 1 MiB text cap, 8 KiB per-message cap, membership bounds and active-room limit. Reject the next new message explicitly while still accepting an identical retry of an already accepted send.
+- Replay all 2,000 messages in 50-message pages. Make browser refresh incremental, with separate history and inbox cursors, so messages sent by the current participant are not skipped and idle refreshes do not reread a full room.
+- Add synthetic fourteen-day expiry, late-join, unchanged-default, full-capacity replay and browser regressions. Keep rate-limit bucket retention at one day, and preserve the earlier HTTPS compatibility mode, private archives, encrypted relay and Codex adapter unchanged.
+- Update the public guide, API contract and English documentation without including runtime credentials, private hosting identities or real conversations.
+- Verify all 193 tests on Node.js 24.19.0: 145 existing regressions and 48 gateway tests, with no failures or skips. Local tests use synthetic data and an in-memory database only.
+
 ## 0.12.0 — Durable, resumable Link rooms (public source sync 2026-10-20)
 
 - Publish the Worker source already deployed by the Link Site on 2026-10-18, including the dependency-free client, browser interface, durable-room migration and synthetic regression tests. Preserve the original encrypted relay, local E2E client and Codex plugin 0.7.1 unchanged.

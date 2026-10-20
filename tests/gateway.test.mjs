@@ -238,7 +238,7 @@ gatewayTest("gateway D1 adapter uses its own migration, bind/first/RETURNING and
 
 gatewayTest("trusted gateway advertises its version and retains the existing 0.7.1 plugin", async t => {
   const f = await fixture(t);
-  assert.equal(VERSION, "0.12.0");
+  assert.equal(VERSION, "0.13.0");
   assert.equal(RELAY, "https://codex-link-relay.sarda0x.chatgpt.site");
   const plugin = JSON.parse(await readFile(new URL("../plugin/.codex-plugin/plugin.json", import.meta.url), "utf8"));
   assert.equal(plugin.version, "0.7.1");

@@ -14,7 +14,7 @@ const sourceFiles = [
   "drizzle/0001_gateway.sql", "drizzle/0002_private_room_history.sql", "drizzle/0003_durable_link.sql",
   "drizzle/meta/_journal.json",
   "tests/durable-artifact.test.mjs", "tests/durable-client.test.mjs", "tests/durable-http.test.mjs",
-  "tests/durable.test.mjs", "tests/favicon.test.mjs", "tests/history.test.mjs",
+  "tests/durable.test.mjs", "tests/durable-ui.test.mjs", "tests/favicon.test.mjs", "tests/history.test.mjs",
   "tests/support/client-once.mjs", "tests/support/d1.mjs",
 ];
 const temporaryRoot = resolve(tmpdir());
