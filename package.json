@@ -1,13 +1,15 @@
 {
   "name": "codex-link-prototype",
-  "version": "0.10.0",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./link/client.mjs"
   },
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
+    "test": "node scripts/test-all.mjs",
+    "test:legacy": "node --test tests/*.test.mjs",
+    "test:gateway": "node gateway/scripts/test.mjs",
     "relay": "node dev-relay/server.mjs",
     "link:stdio": "node link/stdio.mjs",
     "link:api": "node link/http-server.mjs",

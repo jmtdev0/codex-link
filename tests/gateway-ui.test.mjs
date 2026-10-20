@@ -6,7 +6,7 @@ import worker from "../gateway/worker/index.js";
 
 async function ui(responses = []) {
   const script = await (await worker.fetch(new Request("https://gateway.example.test/gateway-client.js"))).text();
-  const html = await (await worker.fetch(new Request("https://gateway.example.test/"))).text();
+  const html = await (await worker.fetch(new Request("https://gateway.example.test/legacy"))).text();
   const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
   const elements = Object.fromEntries(ids.map(id => [id, { value: "", hidden: ["secret", "retry", "owner-secret", "host-retry"].includes(id), disabled: false, checked: false, textContent: "" }]));
   Object.assign(elements.invite, { value: "synthetic-nonfunctional-invitation" });
@@ -35,7 +35,7 @@ async function ui(responses = []) {
 }
 
 test("gateway UI uses masked credential fields, off-by-default consent, no inline scripts or external resources", async () => {
-  const response = await worker.fetch(new Request("https://gateway.example.test/"));
+  const response = await worker.fetch(new Request("https://gateway.example.test/legacy"));
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /id="invite" type="password" autocomplete="off"/);
@@ -107,7 +107,7 @@ test("gateway UI revocation keeps the credential out of URL/body and clears the 
   assert.match(f.elements["revoke-result"].textContent, /owner can close/);
 });
 test("Link page offers public room creation and keeps both explicit consent choices off by default", async () => {
-  const html = await (await worker.fetch(new Request("https://gateway.example.test/"))).text();
+  const html = await (await worker.fetch(new Request("https://gateway.example.test/legacy"))).text();
   assert.match(html, /<title>Link ·/);
   assert.match(html, /No Codex plugin/);
   assert.match(html, /id="new-room"/);

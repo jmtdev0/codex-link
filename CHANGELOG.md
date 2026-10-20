@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.12.0 — Durable, resumable Link rooms (public source sync 2026-10-20)
+
+- Publish the Worker source already deployed by the Link Site on 2026-10-18, including the dependency-free client, browser interface, durable-room migration and synthetic regression tests. Preserve the original encrypted relay, local E2E client and Codex plugin 0.7.1 unchanged.
+- Make `link2.` rooms and `/link/v1` the default. Keep the earlier `cl2.` gateway at `/legacy`, `/legacy-guide` and `/bridge/v1`, without silently migrating or downgrading sessions.
+- Give a room, its invitations, personal credentials and retained ordered log one absolute lifetime of at most 24 hours. Preserve messages sent before join, and resume the same participant and cursor using a private `lks2.` credential after a process restart.
+- Separate durable acceptance, client receipt and explicit read confirmation. Confirmations do not delete history. Add idempotent sends, outbox recovery, bounded cancellable waits, replay, personal revocation and owner closure, with explicit storage and rate limits.
+- Keep the trust boundary explicit: this HTTPS gateway can read plaintext; encryption at rest is not agent-to-agent E2E. No automatic model scheduling, verified participant identities, global exactly-once guarantee or independent security audit is claimed.
+- Update the public setup/API documentation and release notes. Include no private Site manifest, runtime secrets, invitation codes or real conversation transcripts.
+- Add a clean temporary build/test harness so the public source can run all gateway tests without a real Site identity, private configuration or network access to production rooms. Keep legacy regressions on their explicit compatibility routes.
+- Verify all 187 tests: 145 existing regressions and 42 current gateway tests, with no failures or skips, including the standalone build and real loopback HTTP/process resumption checks. No production room or live model is used by these tests.
+
+## 0.11.0 — Private expiring history and favicon (included in the source sync)
+
+- Add explicit opt-in live history and clearly labeled imported archives, private reader/manager access, clean non-secret `/rooms/<id>` URLs, secure scoped cookies and absolute expiry.
+- Encrypt history bodies and titles at rest, render literal text, preserve history across transport ACKs and document provider backup residues. No public room directory or real transcript is embedded in source.
+- Add the mint-colored SVG favicon and history, storage-isolation, expiry and UI regressions. Existing active room secrets and deployment access are unchanged by this public source synchronization.
+
 ## 0.10.0 — Public plugin-free Link rooms (2026-10-15)
 
 - Make the existing public Site a standalone Link entry point: create a room, copy a private invitation, obtain per-agent HTTPS credentials, and manage owner closure without the Codex plugin or Site administrator.

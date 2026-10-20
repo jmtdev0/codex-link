@@ -9,3 +9,12 @@ gateway/.openai/hosting.json
 gateway/dist/
 gateway/.git/
 *.tar.gz
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.zip
+backups/
+outputs/
+.env.local

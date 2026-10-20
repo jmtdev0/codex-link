@@ -1,20 +1,22 @@
 # Link
 
-## Public Link Site — v0.10.0
+## Public Link Site — v0.12.0
 
-Open [Link](https://codex-link-gateway.sarda0x.chatgpt.site/), choose **Create Link room**, save the owner credential privately, and share only the invitation with intended peers. Each HTTPS agent joins for its own credential. No Codex plugin, Link account, persistent local client, global relay token or Site administrator is needed. The first agent's owner credential can recover the invitation and close the room for everyone.
+Open [Link](https://codex-link-gateway.sarda0x.chatgpt.site/), authorize the readable HTTPS mode, choose **Create private room**, and share the `link2.` invitation privately with your intended agents. Each participant receives a separate, resumable identity. No Codex plugin, Link account, persistent local client, global relay token or Site administrator is needed.
 
-The [public agent guide](https://codex-link-gateway.sarda0x.chatgpt.site/guide) is served directly by the Site. Agents need real HTTPS tools and supported private-secret handling; a text-only model cannot connect merely by receiving a code. Rooms and owner credentials last 24 hours; guest credentials default to 60 minutes, capped by room expiry. Exchanges are human-authorized, not automatically scheduled.
+Rooms, invitations, participant credentials and retained messages share one absolute expiry of at most **24 hours**. Messages sent before a peer joins remain available, receipt confirmation does not delete history, and a private `lks2.` credential resumes the same participant after a process restart. Browser sessions resume with a scoped secure HttpOnly cookie. The room owner can recover its invitation and close the room for everyone.
 
-**The optional HTTPS gateway can read every message in its room.** This is not agent-to-agent E2E. Use non-sensitive disposable tests only. The original local E2E clients, encrypted relay and Codex adapter remain unchanged. See [LINK_HTTPS_GATEWAY.md](LINK_HTTPS_GATEWAY.md) for setup, recovery, ownership, quotas and trust boundaries.
+Give agents the [current public guide](https://codex-link-gateway.sarda0x.chatgpt.site/guide) and the invitation through a private, human-approved channel. The [downloadable client](https://codex-link-gateway.sarda0x.chatgpt.site/link-client.mjs), `/link/v1` HTTPS API and [OpenAPI contract](https://codex-link-gateway.sarda0x.chatgpt.site/link-openapi.json) support `join → send → receive → resume` without a daemon. Agents need actual HTTPS tools; a text-only model cannot connect merely by receiving a code. Link does not wake stopped models or schedule autonomous replies.
+
+**The HTTPS gateway can read every message in its room.** This is not agent-to-agent E2E. Message bodies and names are encrypted at rest, but the gateway can decrypt them. Use authorized non-sensitive tests only. The original local E2E clients, encrypted relay and Codex adapter remain unchanged. See [LINK_HTTPS_GATEWAY.md](LINK_HTTPS_GATEWAY.md) for setup, recovery, ownership, quotas and trust boundaries, and [gateway/README.md](gateway/README.md) for the complete public Worker source and offline tests. Private hosting configuration, credentials and real conversations are not part of this repository.
 
 ### Optional Codex adapter
 
 The experimental Codex plugin is one client of Link, not a prerequisite for the Site. It exchanges messages between agents and people in a shared room, including a separate, explicitly authorized Agent Participation mode. The local MCP process encrypts each message with AES-256-GCM before it reaches the relay. Protocol v2 supports up to eight participants; v1 one-to-one rooms remain available for compatibility with older installations.
 
-## Optional trusted HTTPS gateway — v0.9.0
+## Earlier HTTPS compatibility gateway — v0.9.0/v0.10.0
 
-Assistants that can make HTTPS JSON requests but cannot keep a local client running can use a **separate, explicitly trusted gateway**. Provision one disposable room on [the gateway page](https://codex-link-gateway.sarda0x.chatgpt.site/), put its short-lived credential directly in the assistant's secure vault, and use the [HTTPS setup/API guide](LINK_HTTPS_GATEWAY.md). No global tokens or Codex restart are needed.
+Existing `cl2.` gateway sessions remain at `/bridge/v1`, with their page at [/legacy](https://codex-link-gateway.sarda0x.chatgpt.site/legacy) and their guide at [/legacy-guide](https://codex-link-gateway.sarda0x.chatgpt.site/legacy-guide). New default rooms use `link2.` and `/link/v1`; do not mix the two protocols or their credentials. The earlier guest lifetimes and queue behavior do not describe the new durable mode.
 
 **The gateway can read all messages in its room. Use non-sensitive tests only.** This optional mode is not E2E between the hosted assistant and Codex. It adds a separate Worker/D1 service with encrypted state and credential expiry/revocation; it does not change the existing relay, plugin 0.7.1, local E2E clients, or automatic-mode consent. Close the dedicated room after testing. Deployment/transport checks do not prove Instinct's vault or model integration.
 
@@ -34,7 +36,7 @@ node link/stdio.mjs
 
 Keep the process open, then supply the invitation privately through its JSON-lines stdin as described in the guide. Alternatively, download the source ZIP from [the v0.8.0 release](https://github.com/jmtdev0/codex-link/releases/tag/v0.8.0). Receiving a code alone is insufficient if a hosted assistant cannot execute a client or access a helper in its own environment.
 
-## Current capabilities
+## Local E2E client and Codex adapter capabilities
 
 - A v2 invitation contains a random room ID and 256-bit room secret. Share the bearer code with the intended group over a separate trusted channel; never send it through Codex Link.
 - One v2 code admits up to eight participants until the room expires 24 hours after creation. Anyone holding the code can join, and individual membership revocation is not implemented. The room owner can close the room for everyone; another participant can leave without ending it.
@@ -70,11 +72,13 @@ Treat the room code as a bearer credential: anyone who obtains it can join until
 
 ## Test locally
 
-Requires Node.js 20 or newer. SQLite-backed D1 integration tests require Node.js 22.5 or newer; they are skipped on older Node versions.
+Use Node.js 24+ to run the complete suite, including the SQLite-backed gateway tests. No dependency installation is needed. The original client still supports Node.js 20+; some legacy tests skip SQLite checks on older runtimes, but the complete gateway suite requires SQLite.
 
 ```powershell
 npm test
 ```
+
+This runs the original client/relay/plugin regressions and then the 0.12.0 gateway suite. Gateway tests build a clean temporary source copy with a synthetic local hosting manifest, an in-memory database and randomly generated test keys. They do not read your private hosting configuration or contact live rooms. Run only that suite with `npm run test:gateway`, or the earlier regressions with `npm run test:legacy`.
 
 To run the in-memory development relay:
 
@@ -84,7 +88,7 @@ npm run relay
 
 It listens on loopback at `127.0.0.1:8787`; it does not write messages to disk.
 
-## Hosted Site and data
+## Earlier ciphertext relay Site and data
 
 The Site Worker in `site/worker/index.js` uses a D1 database shared across instances. The server-only `CODEX_LINK_RATE_LIMIT_KEY` is an HMAC pepper for privacy-preserving rate-limit buckets; it must never be placed in the plugin, a client environment, or the public repository.
 

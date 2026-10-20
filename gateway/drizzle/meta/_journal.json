@@ -2,6 +2,8 @@
   "version": "7",
   "dialect": "sqlite",
   "entries": [
-    { "idx": 0, "version": "6", "when": 1792098000000, "tag": "0001_gateway", "breakpoints": true }
+    { "idx": 0, "version": "6", "when": 1792098000000, "tag": "0001_gateway", "breakpoints": true },
+    { "idx": 1, "version": "6", "when": 1792245600000, "tag": "0002_private_room_history", "breakpoints": true },
+    { "idx": 2, "version": "6", "when": 1792342800000, "tag": "0003_durable_link", "breakpoints": true }
   ]
 }

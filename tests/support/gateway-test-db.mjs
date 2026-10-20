@@ -15,7 +15,9 @@ export async function createGatewayTestDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   try {
     sqlite.exec("PRAGMA foreign_keys = ON");
-    sqlite.exec(await readFile(new URL("../../gateway/drizzle/0001_gateway.sql", import.meta.url), "utf8"));
+    for (const name of ["0001_gateway", "0002_private_room_history", "0003_durable_link"]) {
+      sqlite.exec(await readFile(new URL("../../gateway/drizzle/" + name + ".sql", import.meta.url), "utf8"));
+    }
   } catch (error) {
     sqlite.close();
     throw error;

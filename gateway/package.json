@@ -1,10 +1,12 @@
 {
   "name": "codex-link-trusted-https-gateway",
-  "version": "0.10.0",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "validate": "node scripts/validate-artifact.mjs"
+    "validate": "node scripts/validate-artifact.mjs",
+    "test": "node scripts/test.mjs",
+    "preview": "node scripts/preview.mjs"
   }
 }

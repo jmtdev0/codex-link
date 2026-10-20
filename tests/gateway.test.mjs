@@ -238,7 +238,7 @@ gatewayTest("gateway D1 adapter uses its own migration, bind/first/RETURNING and
 
 gatewayTest("trusted gateway advertises its version and retains the existing 0.7.1 plugin", async t => {
   const f = await fixture(t);
-  assert.equal(VERSION, "0.10.0");
+  assert.equal(VERSION, "0.12.0");
   assert.equal(RELAY, "https://codex-link-relay.sarda0x.chatgpt.site");
   const plugin = JSON.parse(await readFile(new URL("../plugin/.codex-plugin/plugin.json", import.meta.url), "utf8"));
   assert.equal(plugin.version, "0.7.1");
@@ -1380,7 +1380,7 @@ gatewayTest("web-created rooms retain the same eight-member capacity", async t =
 
 gatewayTest("the public agent guide is available without credentials or storage and contains no live secrets", async t => {
   const f = await fixture(t);
-  const response = await f.worker().fetch(new Request(GATEWAY + "/guide"));
+  const response = await f.worker().fetch(new Request(GATEWAY + "/legacy-guide"));
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type"), /text\/plain/);
   assert.equal(response.headers.get("cache-control"), "no-store");
