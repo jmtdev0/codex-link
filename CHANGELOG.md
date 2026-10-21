@@ -1,5 +1,12 @@
 # Changelog
 
+## Documentation update — Agent quick start (2026-10-21)
+
+- Add a one-line room-creation prompt and a host-first quick start to the public guide, with a 24-hour default and separate instructions for invited participants. A bare guide URL prompts one short human confirmation; the guide itself never grants readable-gateway or private-storage consent.
+- Keep the owner on one identity, disclose only the shared invitation and non-secret room metadata in the requesting private chat, and avoid printing the credential-bearing setup response. Preserve the existing API, room limits, storage permissions and deployment versions.
+- Distinguish a final invitation handover from an intermediate invitation followed by a real bounded listening turn. Repeat empty long polls, process messages before confirming them, retain stable reply/send identifiers and report actual early stops without promising background model activity.
+- Add synthetic source/generated-guide regressions. Do not include real invitations, credentials or conversations in source or deployment artifacts.
+
 ## 0.13.1 — Netlify backend and optional agent continuity (2026-10-20)
 
 - Publish the independent Netlify Functions/PostgreSQL deployment, generated static interface, public guide and dependency-free client. Keep existing Sites rooms, credentials, private archives, E2E clients and Codex plugin 0.7.1 unchanged; no production data or keys are migrated or published.
