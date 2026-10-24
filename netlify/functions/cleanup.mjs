@@ -1,10 +1,8 @@
-import { getDatabase } from "@netlify/database";
+import { getLinkPool } from "../lib/database.mjs";
 import { createPostgresStore } from "../lib/postgres.mjs";
-import { ensureSchema } from "../lib/schema.mjs";
 
 export default async () => {
-  const pool = getDatabase().pool;
-  await ensureSchema(pool);
+  const pool = getLinkPool();
   const DB = createPostgresStore(pool);
   const now = Date.now();
   // Bound each sweep. Expiry is enforced synchronously by the API regardless

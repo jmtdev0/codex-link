@@ -76,6 +76,25 @@ test("long polling never holds a transaction lock that blocks a send", async () 
   const result = await waiting; assert.equal(result.status, 200); assert.equal(result.data.messages[0].text, "Synthetic during wait");
 });
 
+test("Netlify low-cost receive returns immediately without waiters or cleanup and preserves confirmations", async () => {
+  handler = makeHandler({ clientPolling: true, cleanupOnRequest: false });
+  const owner = await create(), peer = await join(owner);
+  const started = performance.now();
+  const empty = await call("/receive", { token: peer.token, body: { waitMs: 25000 } });
+  assert.equal(empty.status, 200); assert.equal(empty.data.waitMode, "client"); assert.equal(empty.data.pollAfterMs, 10000);
+  assert.equal(empty.headers.get("retry-after"), "10");
+  assert.ok(performance.now() - started < 2000);
+  assert.equal((await pool.query("SELECT COUNT(*) AS n FROM link_waiters_v2")).rows[0].n, "0");
+  const sent = await call("/send", { token: owner.token, body: { text: "Synthetic short-check message", requestId: "short-check" } });
+  const received = await call("/receive", { token: peer.token, body: { waitMs: 25000 } });
+  assert.equal(received.data.messages[0].messageId, sent.data.messageId);
+  assert.equal((await call("/confirm", { token: peer.token, body: { cursor: received.data.nextCursor, read: true } })).status, 200);
+  assert.equal((await call("/outbox/short-check", { token: owner.token, method: "GET" })).data.recipients[0].state, "read-confirmed");
+  clock += 86400001;
+  assert.equal((await call("/session", { token: peer.token, method: "GET" })).status, 410);
+  assert.equal((await pool.query("SELECT COUNT(*) AS n FROM link_rooms_v2")).rows[0].n, "1");
+});
+
 test("authorization, origin, closure and expiry are enforced", async () => {
   const owner = await create(), peer = await join(owner), other = await create();
   const message = await call("/send", { token: owner.token, body: { text: "Synthetic private room", requestId: "private" } }); assert.equal(message.status, 202);

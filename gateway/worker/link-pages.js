@@ -90,7 +90,7 @@ export function durableBrowserClient(createLinkClient, { idleMs = Infinity, agen
       status("room-expiry", "Expires " + new Date(session.expiresAt).toLocaleString() + " · " + Math.ceil(left / 60000) + " min left"); };
     tick(); lifetimeTimer = setInterval(tick, 1000);
     try { await refresh(); } catch (error) { status("connection-status", "Session resumed; conversation refresh needs retry. " + errorText(error)); }
-    watch(); refreshTimer = setInterval(() => { if (active && document.visibilityState === "visible" && userIsActive()) refresh().catch(error => status("connection-status", errorText(error))); }, 12000);
+    watch(); refreshTimer = setInterval(() => { if (active && document.visibilityState === "visible" && userIsActive()) refresh().catch(error => status("connection-status", errorText(error))); }, session.waitMode === "client" ? 60000 : 12000);
   }
   async function attemptSetup(kind, input) {
     if (!$("durable-consent").checked) { status("setup-status", "Please authorize the gateway once before creating or joining."); return; }

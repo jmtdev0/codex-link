@@ -1,7 +1,10 @@
 // Provider-neutral durable HTTPS mode. This service CAN read its room contents.
 // It neither joins nor changes the independent signed E2E relay rooms.
 export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates = 12, maxIngress = 240, maxRequests = 180, maxWaitMs = 25000, pollMs = 1000,
+  clientPolling = false, pollAfterMs = 10000, cleanupOnRequest = true,
   sourceAddress = request => request.headers.get("cf-connecting-ip") } = {}) {
+  if (!Number.isInteger(pollAfterMs) || pollAfterMs < 1000 || pollAfterMs > 60000) throw new Error("Invalid polling interval");
+  const waiting = clientPolling ? { waitMode: "client", pollAfterMs } : {};
   const enc = new TextEncoder(), dec = new TextDecoder();
   const ID = /^[A-Za-z0-9_-]{22}$/, TOKEN = /^lks2\.[A-Za-z0-9_-]{43}$/;
   const RID = /^[A-Za-z0-9_-]{1,80}$/, COOKIE = "__Host-link-session-v2";
@@ -101,7 +104,7 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
     const members = await first(env.DB, "SELECT COUNT(*) AS count FROM link_participants_v2 WHERE room_id = ? AND revoked_at IS NULL", auth.room.room_id);
     return { roomId: auth.room.room_id, participantId: auth.p.participant_id, name: await open(env, auth.room, auth.p.name_ciphertext, nameAAD(auth.p)), role: auth.p.role,
       expiresAt: new Date(auth.room.expires_at).toISOString(), serverTime: new Date(now()).toISOString(), cursor: auth.p.confirmed_cursor,
-      apiBase: auth.room.audience + "/link/v1", gatewayCanReadPlaintext: true, mode: "durable-https", participantCount: members.count, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, maxWaitMs };
+      apiBase: auth.room.audience + "/link/v1", gatewayCanReadPlaintext: true, mode: "durable-https", participantCount: members.count, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, maxWaitMs, ...waiting };
   }
   async function setup(request, env, url, creating) {
     const credential = token(request, url, false), input = await body(request);
@@ -178,8 +181,11 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
     const messages = await Promise.all(items.map(async m => ({ ...await open(env, auth.room, m.payload_ciphertext, messageAAD(m)), messageId: m.message_id, sequence: m.sequence,
       participantId: m.sender_id, timestamp: new Date(m.created_at).toISOString(), untrusted: true })));
     const nextCursor = rows.length > BATCH ? items.at(-1).sequence : Math.max(after, upper);
-    await run(env.DB, "UPDATE link_participants_v2 SET offered_cursor = MAX(offered_cursor, ?) WHERE participant_id = ?", nextCursor, auth.p.participant_id);
-    return { messages, nextCursor, more: rows.length > BATCH, expiresAt: new Date(auth.room.expires_at).toISOString(), serverTime: new Date(now()).toISOString(), untrusted: true };
+    if (nextCursor > auth.p.offered_cursor) {
+      await run(env.DB, "UPDATE link_participants_v2 SET offered_cursor = MAX(offered_cursor, ?) WHERE participant_id = ?", nextCursor, auth.p.participant_id);
+      auth.p.offered_cursor = nextCursor;
+    }
+    return { messages, nextCursor, more: rows.length > BATCH, expiresAt: new Date(auth.room.expires_at).toISOString(), serverTime: new Date(now()).toISOString(), untrusted: true, ...waiting };
   }
   function delay(ms, signal) { return new Promise(resolve => { if (signal?.aborted) return resolve();
     const end = () => { clearTimeout(timer); signal?.removeEventListener("abort", end); resolve(); }, timer = setTimeout(end, ms); signal?.addEventListener("abort", end, { once: true }); }); }
@@ -188,7 +194,12 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
     const cursor = input.cursor ?? (conversation ? 0 : auth.p.confirmed_cursor), wait = input.waitMs ?? 0;
     if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > await latest(env, auth.room.room_id) || !Number.isInteger(wait) || wait < 0 || wait > maxWaitMs) invalid();
     let result = await page(env, auth, cursor, conversation);
-    if (result.messages.length || !wait || conversation) { await authenticate(request, env, url); return json(200, result); }
+    if (result.messages.length || !wait || conversation || clientPolling) {
+      await authenticate(request, env, url);
+      const response = json(200, result);
+      if (clientPolling && !conversation && !result.messages.length) response.headers.set("retry-after", String(Math.ceil(pollAfterMs / 1000)));
+      return response;
+    }
     const waiter = random(), deadline = Date.now() + wait;
     const added = await run(env.DB, "INSERT INTO link_waiters_v2 (waiter_id, participant_id, expires_at) SELECT ?, ?, ? WHERE (SELECT COUNT(*) FROM link_waiters_v2 WHERE participant_id = ? AND expires_at > ?) < 2",
       waiter, auth.p.participant_id, now() + maxWaitMs + 5000, auth.p.participant_id, now());
@@ -231,12 +242,13 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
       const url = new URL(request.url);
       if (url.protocol !== "https:" || url.search || url.hash || url.username || url.password) fail(400, "HTTPS_REQUIRED", "Use HTTPS without URL credentials or query parameters.");
       if (request.headers.get("origin") && request.headers.get("origin") !== url.origin || request.headers.get("sec-fetch-site") === "cross-site") fail(403, "ORIGIN_REJECTED", "Cross-origin browser access is not allowed.");
-      if (request.method === "GET" && url.pathname === "/link/v1/info") return json(200, { api: "Link durable HTTPS", version: "0.13.0", gatewayCanReadPlaintext: true, maxWaitMs, ttlHours: MAX_TTL_MINUTES / 60, defaultTtlMinutes: 1440, maxTtlMinutes: MAX_TTL_MINUTES, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, historyOnJoin: true, resumable: true });
+      if (request.method === "GET" && url.pathname === "/link/v1/info") return json(200, { api: "Link durable HTTPS", version: "0.13.0", gatewayCanReadPlaintext: true, maxWaitMs, ttlHours: MAX_TTL_MINUTES / 60, defaultTtlMinutes: 1440, maxTtlMinutes: MAX_TTL_MINUTES, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, historyOnJoin: true, resumable: true, ...waiting });
       if (!env.DB?.prepare || !env.DB?.batch || typeof env.LINK_GATEWAY_MASTER_KEY !== "string") fail(503, "NOT_CONFIGURED", "Durable Link storage is unavailable.");
       unb64(env.LINK_GATEWAY_MASTER_KEY, 32);
       const ip = sourceAddress(request, env); if (typeof ip !== "string" || !ip || ip.length > 128) fail(503, "RATE_PROTECTION_UNAVAILABLE", "Source rate protection is unavailable.");
       const source = b64(await derive(env, ip, "source-rate"));
-      await rate(env.DB, "link2:ingress:" + source, maxIngress); await cleanup(env);
+      await rate(env.DB, "link2:ingress:" + source, maxIngress);
+      if (cleanupOnRequest) await cleanup(env);
       if (request.method === "POST" && url.pathname === "/link/v1/identity") { fields(await body(request), []); await rate(env.DB, "link2:identity:" + source, maxCreates, 600000); return json(201, { credential: "lks2." + random(32), storePrivately: true }); }
       if (request.method === "POST" && ["/link/v1/rooms", "/link/v1/join"].includes(url.pathname)) {
         await rate(env.DB, "link2:setup:" + source, maxCreates, 600000); return await setup(request, env, url, url.pathname.endsWith("/rooms"));

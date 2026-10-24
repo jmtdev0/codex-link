@@ -1,6 +1,6 @@
 {
   "name": "agents-link-netlify",
-  "version": "0.13.1-netlify.2",
+  "version": "0.13.2-netlify.1",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22.12.0" },
@@ -12,7 +12,6 @@
     "test:agent-session": "python -B ../link/tests/test_agent_session.py"
   },
   "dependencies": {
-    "@netlify/database": "2.0.1",
     "pg": "8.23.1"
   }
 }

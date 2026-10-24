@@ -19,11 +19,12 @@ import secrets
 import stat
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.13.1"
+VERSION = "0.13.2"
 FORMAT = "link-private-session-v1"
 TOKEN = re.compile(r"lks2\.[A-Za-z0-9_-]{43}\Z")
 IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{22}\Z")
@@ -348,10 +349,28 @@ def execute(operation, *, origin, filename, approved, development=False):
                 fault("INVALID_INPUT", "waitMs must be an integer from 0 to 25000.")
             body["waitMs"] = wait
             confirm_receipt = body.pop("confirmReceipt", True)
-        value = http.call("/" + action, body)
+        if action == "receive":
+            deadline = time.monotonic() + wait / 1000
+            while True:
+                value = http.call("/receive", body)
+                if value.get("messages") or not wait or value.get("waitMode") != "client":
+                    break
+                interval = value.get("pollAfterMs")
+                if type(interval) is not int or not 1000 <= interval <= 60000:
+                    fault("INVALID_RESPONSE", "Invalid server polling advice.")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                # Wait locally, not inside a billed Netlify invocation.
+                time.sleep(min(interval / 1000, remaining))
+                if remaining <= interval / 1000:
+                    break
+                body["waitMs"] = max(0, min(wait, int((deadline - time.monotonic()) * 1000)))
+        else:
+            value = http.call("/" + action, body)
         if action == "receive":
             value["receiptPending"] = False
-            if confirm_receipt:
+            if confirm_receipt and value["nextCursor"] > result.get("cursor", 0):
                 try:
                     http.call("/confirm", {"cursor": value["nextCursor"], "read": False})
                 except LinkFault:

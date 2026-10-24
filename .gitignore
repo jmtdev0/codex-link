@@ -14,10 +14,14 @@ gateway/.git/
 *.sqlite-*
 *.db
 *.db-*
+*.dpapi
+*.pgdump
+*.dump
 *.zip
 backups/
 outputs/
 .env.local
+.neon
 .netlify/
 netlify/.netlify/
 netlify/public/

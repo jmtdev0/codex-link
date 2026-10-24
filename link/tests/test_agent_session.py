@@ -272,6 +272,51 @@ class SessionTests(unittest.TestCase):
             receiver.stdout.close()
             receiver.stderr.close()
 
+    def test_client_waiting_sleeps_locally_and_keeps_receipt_separate_from_read(self):
+        self.execute()
+        original = client.LinkHTTP.call
+        clock = [0.0]
+        checks = []
+        confirmations = []
+
+        def call(http, path, body=None):
+            if path == "/receive":
+                checks.append(dict(body))
+                if len(checks) == 1:
+                    return {"messages": [], "nextCursor": 0, "waitMode": "client", "pollAfterMs": 10000}
+                return {"messages": [{"messageId": "M" * 22, "text": "Synthetic polled reply"}], "nextCursor": 1, "waitMode": "client", "pollAfterMs": 10000}
+            if path == "/confirm":
+                confirmations.append(dict(body))
+                return {"confirmed": True}
+            return original(http, path, body)
+
+        with mock.patch.object(client.LinkHTTP, "call", call), mock.patch.object(client.time, "monotonic", side_effect=lambda: clock[0]), mock.patch.object(client.time, "sleep", side_effect=lambda value: clock.__setitem__(0, clock[0] + value)):
+            result = self.execute(self.operation("receive", waitMs=25000, confirmReceipt=False))
+        self.assertEqual(clock[0], 10.0)
+        self.assertEqual(len(checks), 2)
+        self.assertEqual(checks[1]["waitMs"], 15000)
+        self.assertEqual(result["result"]["messages"][0]["text"], "Synthetic polled reply")
+        self.assertEqual(confirmations, [])
+
+    def test_empty_local_wait_checks_at_most_three_times_and_does_not_confirm(self):
+        self.execute()
+        original = client.LinkHTTP.call
+        clock = [0.0]
+        paths = []
+
+        def call(http, path, body=None):
+            paths.append(path)
+            if path == "/receive":
+                return {"messages": [], "nextCursor": 0, "waitMode": "client", "pollAfterMs": 10000}
+            return original(http, path, body)
+
+        with mock.patch.object(client.LinkHTTP, "call", call), mock.patch.object(client.time, "monotonic", side_effect=lambda: clock[0]), mock.patch.object(client.time, "sleep", side_effect=lambda value: clock.__setitem__(0, clock[0] + value)):
+            result = self.execute(self.operation("receive", waitMs=25000))
+        self.assertEqual(clock[0], 25.0)
+        self.assertEqual(paths.count("/receive"), 3)
+        self.assertNotIn("/confirm", paths)
+        self.assertEqual(result["result"]["messages"], [])
+
     def test_redirect_is_not_followed_and_https_is_required_by_default(self):
         with self.assertRaises(client.LinkFault) as error:
             client.execute(self.operation(), origin=self.server.origin, filename=str(self.state), approved=True)

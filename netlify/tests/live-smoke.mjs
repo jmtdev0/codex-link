@@ -38,6 +38,7 @@ try {
   assert.equal(infoResponse.status, 200);
   const info = await infoResponse.json();
   assert.equal(info.storage, "postgres"); assert.equal(info.maxMessages, 2000); assert.equal(info.maxTtlMinutes, 20160);
+  assert.equal(info.databaseProvider, "neon"); assert.equal(info.waitMode, "client");
   summary.checks.push("public-info-and-limits");
   const session = await owner.create({ name: "Synthetic Node owner", ttlMinutes: 20160 });
   created = true;
@@ -65,6 +66,15 @@ try {
   assert.equal(new Set(concurrent.map(message => message.messageId)).size, 3);
   assert.equal(new Set(concurrent.map(message => message.sequence)).size, 3);
   summary.checks.push("concurrent-message-allocation");
+  const checkStarted = performance.now();
+  const emptyResponse = await fetch(origin + "/link/v1/receive", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + owner.exportSession().credential }, body: JSON.stringify({ waitMs: 25000 }) });
+  assert.equal(emptyResponse.status, 200);
+  const empty = await emptyResponse.json();
+  summary.emptyReceiveMilliseconds = Math.round(performance.now() - checkStarted);
+  assert.equal(empty.messages.length, 0); assert.equal(empty.waitMode, "client"); assert.equal(empty.pollAfterMs, 10000);
+  assert.equal(emptyResponse.headers.get("retry-after"), "10");
+  assert.ok(summary.emptyReceiveMilliseconds < 10000, "server must not occupy the requested 25-second wait");
+  summary.checks.push("immediate-server-receive-with-client-polling-advice");
   const denied = await fetch(origin + "/link/v1/conversation", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   assert.equal(denied.status, 401);
   summary.checks.push("unauthenticated-access-denied");

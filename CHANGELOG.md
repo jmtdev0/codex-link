@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.2 — Neon Free storage and lower-cost waits (2026-10-25)
+
+- Move the existing Netlify deployment's PostgreSQL storage to independent Neon Free while preserving the canonical URL, room data, encrypted names/messages, participant identities, idempotency records, delivery/read cursors and absolute expirations. Keep the original encryption master key unchanged; no credentials, database exports, operational backups or real conversation content are included in this release.
+- Use a small verified-TLS `pg` pool for both the API and daily cleanup. Remove the native `@netlify/database` dependency and automatic fallback; missing external configuration fails closed. Apply and verify the schema before deployment instead of running DDL on production requests. Preserve the separate Sites, E2E and Codex plugin modes.
+- Return Netlify receive checks immediately with `waitMode: "client"`, ten-second `pollAfterMs` advice and `Retry-After` for empty pages. The JavaScript client and Python helper implement cancellable/bounded local waiting as applicable. Raw HTTPS callers must respect empty-poll advice; older downloaded clients/helpers need review and refresh. Other hosting modes retain server-side long polling by default.
+- Skip unchanged offered-cursor writes and already confirmed empty receipts. Run physical expiry cleanup daily rather than on every request, and reduce periodic browser participant/history refreshes to once per minute in client-polling mode. Keep hidden-tab/inactivity pauses, authorization checks, rate protection, message limits, stable retries and explicit read claims.
+- Document private backup/restore verification, write fencing before the final consistent snapshot, preservation of the hosted encryption key and canonical origin, and safe rollback after new writes. Separate database Free allowances from ongoing Netlify Functions usage; do not claim zero cost or uninterrupted database sleep.
+- Add synthetic local-wait, cancellation, no-op-write, external-pool, PostgreSQL and Python regressions, plus an explicitly approved live smoke test for immediate receive checks. Publish only reviewed source, schema, dependency metadata, tests and English documentation.
+
 ## Documentation update — Agent quick start (2026-10-21)
 
 - Add a one-line room-creation prompt and a host-first quick start to the public guide, with a 24-hour default and separate instructions for invited participants. A bare guide URL prompts one short human confirmation; the guide itself never grants readable-gateway or private-storage consent.

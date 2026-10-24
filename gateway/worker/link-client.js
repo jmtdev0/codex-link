@@ -5,9 +5,20 @@ export function createLinkClient(options = {}) {
   if (parsed.username || parsed.password || parsed.search || parsed.hash || !["", "/", "/link/v1", "/link/v1/"].includes(parsed.pathname) ||
       parsed.protocol !== "https:" && !(parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname))) throw new Error("Use an approved HTTPS Link origin, or loopback for development.");
   const base = parsed.origin + "/link/v1", transport = options.fetch ?? globalThis.fetch;
-  const sleep = options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  const time = options.now ?? Date.now;
+  async function sleep(ms, signal) {
+    if (signal?.aborted) throw fault("ABORTED", "Link operation cancelled.");
+    return new Promise((resolve, reject) => {
+      let timer;
+      const done = error => { clearTimeout(timer); signal?.removeEventListener("abort", abort); error ? reject(error) : resolve(); };
+      const abort = () => done(fault("ABORTED", "Link operation cancelled."));
+      signal?.addEventListener("abort", abort, { once: true });
+      if (options.sleep) Promise.resolve().then(() => options.sleep(ms, signal)).then(() => done(), done);
+      else timer = setTimeout(done, ms);
+    });
+  }
   let credential = options.credential, session, pendingSetup;
-  const pending = new Map(); let pendingReceipt = 0;
+  const pending = new Map(); let pendingReceipt = 0, confirmedCursor = 0;
   if (credential !== undefined && !/^lks2\.[A-Za-z0-9_-]{43}$/.test(credential)) throw new Error("Invalid private Link participant credential.");
   function fault(code, message, extra = {}) { const error = new Error(message); Object.assign(error, { code }, extra); return error; }
   function random() { const bytes = crypto.getRandomValues(new Uint8Array(32)); let raw = ""; for (const b of bytes) raw += String.fromCharCode(b);
@@ -28,18 +39,19 @@ export function createLinkClient(options = {}) {
         last = fault(result.error?.code ?? "HTTP_ERROR", result.error?.message ?? "Link request failed.", { status: response.status });
         if (last.code === "ROOM_LIMIT" || ![429, 502, 503, 504].includes(response.status) || attempt === 1) throw last;
         const seconds = Number(response.headers.get("retry-after") ?? 0.2);
-        await sleep(Math.min(2000, Math.max(100, Number.isFinite(seconds) ? seconds * 1000 : 200)));
+        await sleep(Math.min(2000, Math.max(100, Number.isFinite(seconds) ? seconds * 1000 : 200)), signal);
       } catch (error) {
         if (signal?.aborted) throw fault("ABORTED", "Link operation cancelled.");
         if (error.code === "ROOM_LIMIT" || error.status && ![429, 502, 503, 504].includes(error.status) || attempt === 1) throw error.code ? error : fault("NETWORK_UNCONFIRMED", "Link outcome is unconfirmed; keep the same private session and requestId.");
-        last = error; await sleep(200);
+        last = error; await sleep(200, signal);
       }
     }
     throw last;
   }
   function remember(result) {
     if (!result || result.apiBase !== base || !/^[A-Za-z0-9_-]{22}$/.test(result.participantId ?? "") || !/^[A-Za-z0-9_-]{22}$/.test(result.roomId ?? "")) throw fault("INVALID_RESPONSE", "Link session metadata is invalid.");
-    session = { ...result }; delete session.credential; delete session.invitation; return result;
+    session = { ...result }; delete session.credential; delete session.invitation;
+    confirmedCursor = Number.isSafeInteger(result.cursor) ? result.cursor : 0; return result;
   }
   async function setup(kind, input) {
     if (options.consentToPlaintextGateway !== true) throw fault("CONSENT_REQUIRED", "Authorize this readable HTTPS gateway once before create or join.");
@@ -54,7 +66,8 @@ export function createLinkClient(options = {}) {
   }
   async function confirm(cursor, read = false) {
     const result = await request("/confirm", { method: "POST", body: { cursor, read } });
-    pendingReceipt = pendingReceipt <= cursor ? 0 : pendingReceipt; return result;
+    pendingReceipt = pendingReceipt <= cursor ? 0 : pendingReceipt;
+    confirmedCursor = Math.max(confirmedCursor, cursor); return result;
   }
   return {
     prepareSession() { seed(); return { baseUrl: parsed.origin, credential }; },
@@ -85,11 +98,25 @@ export function createLinkClient(options = {}) {
     },
     async receive(input = {}) {
       const waitMs = input.waitMs ?? 25000;
-      if (pendingReceipt) try { await confirm(pendingReceipt); } catch {}
-      const result = await request("/receive", { method: "POST", body: { waitMs, ...(input.cursor === undefined ? {} : { cursor: input.cursor }) }, signal: input.signal, waitMs });
-      if (!Array.isArray(result.messages) || !Number.isSafeInteger(result.nextCursor)) throw fault("INVALID_RESPONSE", "Link returned an invalid message page.");
+      if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 25000) throw fault("INVALID_INPUT", "waitMs must be an integer from 0 to 25000.");
+      if (pendingReceipt && input.confirmReceipt !== false) try { await confirm(pendingReceipt); } catch {}
+      const deadline = time() + waitMs;
+      let result;
+      do {
+        const remaining = Math.max(0, deadline - time());
+        result = await request("/receive", { method: "POST", body: { waitMs: Math.min(waitMs, Math.floor(remaining)), ...(input.cursor === undefined ? {} : { cursor: input.cursor }) }, signal: input.signal, waitMs: remaining });
+        if (!Array.isArray(result.messages) || !Number.isSafeInteger(result.nextCursor)) throw fault("INVALID_RESPONSE", "Link returned an invalid message page.");
+        if (result.messages.length || !waitMs || result.waitMode !== "client") break;
+        if (!Number.isInteger(result.pollAfterMs) || result.pollAfterMs < 1000 || result.pollAfterMs > 60000) throw fault("INVALID_RESPONSE", "Link returned invalid polling advice.");
+        const left = deadline - time();
+        if (left <= 0) break;
+        // The wait is deliberately in this client, never in a billed server
+        // invocation. A short final wait does not trigger an early extra poll.
+        await sleep(Math.min(result.pollAfterMs, left), input.signal);
+        if (left <= result.pollAfterMs) break;
+      } while (time() < deadline);
       let receiptPending = false;
-      if (input.confirmReceipt !== false) {
+      if (input.confirmReceipt !== false && result.nextCursor > confirmedCursor) {
         pendingReceipt = Math.max(pendingReceipt, result.nextCursor);
         try { await confirm(result.nextCursor); } catch { receiptPending = true; }
       }

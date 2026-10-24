@@ -23,7 +23,7 @@ export function createNetlifyService({ getPool, masterKey, origin = PUBLIC_ORIGI
       const response = await service.fetch(request);
       if (!response.ok) return response;
       const info = await response.json();
-      return Response.json({ ...info, hosting: "netlify", storage: "postgres", deployment: "0.13.1-netlify.2", agentSessionHelper: { version: "0.13.1", python: "/agent-session.py", privateStorageOptIn: true, implicitRejoin: false } }, { headers: response.headers });
+      return Response.json({ ...info, version: "0.13.2", hosting: "netlify", storage: "postgres", databaseProvider: "neon", deployment: "0.13.2-netlify.1", agentSessionHelper: { version: "0.13.2", python: "/agent-session.py", privateStorageOptIn: true, implicitRejoin: false } }, { headers: response.headers });
     }
     // Fail cheaply for signed-out visitors before opening/waking the database.
     // Header contents remain untrusted: normal credential/origin validation

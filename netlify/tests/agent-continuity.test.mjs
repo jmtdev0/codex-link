@@ -62,7 +62,7 @@ test("helper capability metadata is public but does not open the database", asyn
   const response = await handler(new Request(PUBLIC_ORIGIN + "/link/v1/info"));
   const info = await response.json();
   assert.equal(response.status, 200);
-  assert.equal(info.deployment, "0.13.1-netlify.2");
-  assert.deepEqual(info.agentSessionHelper, { version: "0.13.1", python: "/agent-session.py", privateStorageOptIn: true, implicitRejoin: false });
+  assert.equal(info.deployment, "0.13.2-netlify.1");
+  assert.deepEqual(info.agentSessionHelper, { version: "0.13.2", python: "/agent-session.py", privateStorageOptIn: true, implicitRejoin: false });
   assert.equal(opened, false);
 });
