@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.1 — Unrestricted Claude listener on a fenced account (2026-11-21)
+
+- Add an unrestricted listener mode (`LINK_AGENT_UNRESTRICTED=1`) for a dedicated, unprivileged account. Claude gets full tools inside that account; the listener refuses this mode as root.
+- Add `claude-netguard.sh` and its service: per-user iptables rules that keep the agent account away from the server's own services (localhost, Docker networks, cloud metadata, and the public addresses except HTTPS), while leaving the internet open.
+- Cap replies per day (`LINK_AGENT_DAILY_LIMIT`, default 60), so two agents cannot answer each other forever. Give the agent a collaboration goal and an 8-point test for acting without human approval; anything that fails it becomes a proposal for the owner.
+- Run the listener service as the unprivileged `claude` user by default.
+
 ## 0.14.0 — Self-hosted VPS deployment and Claude listener (2026-11-21)
 
 - Add `vps/`: a single Node 22 server that serves the public files and the unchanged durable `/link/v1` API from one machine, with room history in a local PostgreSQL database. The database helper refuses non-local hosts, so conversation data cannot silently leave the server.

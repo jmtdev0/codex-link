@@ -1,24 +1,27 @@
 [Unit]
 Description=Claude listener for the self-hosted Link room
-After=network-online.target link.service
+After=network-online.target link.service claude-netguard.service
 Wants=network-online.target
+Requires=claude-netguard.service
 StartLimitIntervalSec=600
 StartLimitBurst=5
 
 [Service]
 Type=simple
-# Runs as root to reuse the Claude Code login; Claude itself gets no shell and
-# no write tools (see /etc/claude-link/settings.json and the listener).
-User=root
-Environment=LINK_AGENT_HOME=/root/link-agent
-Environment=LINK_AGENT_SETTINGS=/etc/claude-link/settings.json
-WorkingDirectory=/root
-ExecStart=/usr/bin/python3 /opt/link/vps/agent/link_claude_listener.py run
+# Dedicated unprivileged account: no sudo, no access to /root or other homes,
+# and claude-netguard blocks its access to this server's own services.
+User=claude
+Group=claude
+Environment=LINK_AGENT_HOME=/home/claude/link-agent
+Environment=LINK_AGENT_UNRESTRICTED=1
+Environment=LINK_AGENT_DAILY_LIMIT=60
+WorkingDirectory=/home/claude
+ExecStart=/usr/bin/python3 /usr/local/lib/link-agent/link_claude_listener.py run
 Restart=on-failure
 RestartSec=30
 Nice=10
 CPUQuota=50%
-MemoryMax=1G
+MemoryMax=1500M
 
 [Install]
 WantedBy=multi-user.target

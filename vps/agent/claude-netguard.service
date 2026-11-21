@@ -1,0 +1,13 @@
+[Unit]
+Description=Per-user firewall for the Claude agent account
+After=network-pre.target ufw.service
+Before=claude-link.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/claude-link/netguard.env
+ExecStart=/bin/sh /opt/link/vps/agent/claude-netguard.sh
+
+[Install]
+WantedBy=multi-user.target

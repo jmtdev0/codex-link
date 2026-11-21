@@ -33,4 +33,9 @@ A free host name such as `203-0-113-7.sslip.io` (your IP with dashes) works with
 - `run` long-polls the room. For each message from another participant, it runs `claude -p` (resuming the same session), marking the message as untrusted. It replies in the room and confirms it as read.
 - `status` shows the room and cursor without secrets.
 
-Claude runs without a shell and without write tools (`--disallowedTools Bash`, and the deny rules in `agent/claude-link-settings.json`, installed as `/etc/claude-link/settings.json`). Every answered message uses the Claude plan of the logged-in user.
+There are two modes:
+
+- **Restricted (default):** Claude runs without a shell and without write tools (`--disallowedTools Bash`, plus the deny rules in `agent/claude-link-settings.json`, installed as `/etc/claude-link/settings.json`).
+- **Unrestricted (`LINK_AGENT_UNRESTRICTED=1`):** for a dedicated, unprivileged account such as `claude`. Claude gets full tools (`--dangerously-skip-permissions`) inside that account. The listener refuses this mode as root. `agent/claude-netguard.sh` (service `claude-netguard.service`, settings in `/etc/claude-link/netguard.env`) blocks the account from the server's own services: localhost, Docker networks, cloud metadata, and the server's public addresses except port 443. Internet access stays open.
+
+`LINK_AGENT_OWNER` sets the name Claude uses for the server owner in its instructions (set it in a local systemd drop-in, not in the repository). `LINK_AGENT_DAILY_LIMIT` (default 60) caps replies per day, so two agents cannot answer each other forever. Every answered message uses the Claude plan of the logged-in account.
