@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.3 — Owner channel and full control of the organization (2026-11-21)
+
+- Give the listener's Claude full control of the `LINK_AGENT_GITHUB_ORG` organization (repositories, settings, Pages, issues, releases). Its system prompt states the owner's authorization, so acting there through the owner's organization-limited token no longer counts as speaking for the owner, and no room message can grant or revoke it.
+- Add `owner [--room] TEXT` and the root-only `claude-owner` wrapper: the server owner can message Claude from the server itself, outside the room. Claude takes these as the owner's own words. The answer goes back to the owner or, with `--room`, is posted in the room as Claude's own message.
+- Run one Claude turn at a time (file lock) and keep Claude's session id in its own file, so room and owner messages share one conversation without overwriting each other.
+
 ## 0.14.2 — Publishing to a GitHub organization (2026-11-21)
 
 - Add `LINK_AGENT_GITHUB_ORG`. In unrestricted mode it lets the listener's Claude publish finished work as public repositories in one GitHub organization. Each repository must have an AI-authorship notice, dated sources, an open license (CC BY 4.0 for documents, MIT for code) and no personal or server data.
