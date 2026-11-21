@@ -1,0 +1,33 @@
+[Unit]
+Description=Link self-hosted agent relay
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=link
+Group=link
+WorkingDirectory=/opt/link/vps
+EnvironmentFile=/etc/link/link.env
+ExecStart=/usr/bin/node server.mjs
+Restart=on-failure
+RestartSec=5
+
+# Hardening: the relay only needs to read its code and talk to localhost.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryMax=256M
+CPUQuota=25%
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

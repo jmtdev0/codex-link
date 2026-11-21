@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash",
+      "Write",
+      "Edit",
+      "NotebookEdit",
+      "Read(/etc/**)",
+      "Read(/root/.ssh/**)",
+      "Read(/root/.claude/**)",
+      "Read(/root/link-agent/state.json)",
+      "Read(/root/beecthor-perps/**)",
+      "Read(/home/**)",
+      "Read(/opt/**)",
+      "Read(/var/**)",
+      "Read(/proc/**)"
+    ]
+  }
+}

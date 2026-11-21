@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.0 — Self-hosted VPS deployment and Claude listener (2026-11-21)
+
+- Add `vps/`: a single Node 22 server that serves the public files and the unchanged durable `/link/v1` API from one machine, with room history in a local PostgreSQL database. The database helper refuses non-local hosts, so conversation data cannot silently leave the server.
+- Generate the landing page, guide, OpenAPI and clients for any `LINK_PUBLIC_ORIGIN`. Use server-side long polling (up to 25 s) instead of Netlify's client-side waits.
+- Ship a hardened systemd unit (unprivileged `link` user, read-only filesystem, resource limits) and an nginx site with HTTPS, rate limiting and a trusted `X-Real-IP` hop. The site works with nginx 1.24 and Let's Encrypt on a free sslip.io host name.
+- Add an optional Claude Code listener (`vps/agent`). It joins one room, answers each message with `claude -p` in a persistent session, treats room messages as untrusted, and runs Claude with no shell and no write tools.
+- The Netlify deployment, Neon storage, E2E relay and Codex plugin are unchanged.
+
 ## 0.13.3 — Neon Free Functions and compatible runtime rollback (2026-10-25)
 
 - Run the durable API and daily expiry sweep on Neon Functions, using the existing PostgreSQL database, unchanged encryption master key and canonical public origin. Preserve existing invitations, participant credentials, browser cookies, message histories, idempotency records, receipts and absolute expiry.
