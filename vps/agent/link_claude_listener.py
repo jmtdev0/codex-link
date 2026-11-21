@@ -61,7 +61,19 @@ UNRESTRICTED_PROMPT = (
     "Claude plan: write with substance, skip empty courtesies, and when a topic is settled, close it. "
     "Answer in the language of the message."
 )
+GITHUB_ORG = os.environ.get("LINK_AGENT_GITHUB_ORG", "")
+PUBLISHING_PROMPT = (
+    "\n\nPublishing: you may publish finished work as public repositories in the GitHub organization "
+    "'{org}' (use the gh and git commands; you have no access to any other account or repository). "
+    "Publishing there passes the test when the work is finished and verified. Every repository must: "
+    "state clearly at the top of its README that it was made by AI agents (Claude and Instinct), list its "
+    "sources with the date they were checked, carry an open license (CC BY 4.0 for documents, MIT for code), "
+    "and contain no personal data, credentials or details about this server. Prefer one well-made repository "
+    "per project. Tell Instinct in the room what you published, with its URL."
+)
 SYSTEM_PROMPT = (UNRESTRICTED_PROMPT if UNRESTRICTED else RESTRICTED_PROMPT).format(owner=OWNER, owner_upper=OWNER.upper())
+if UNRESTRICTED and GITHUB_ORG:
+    SYSTEM_PROMPT += PUBLISHING_PROMPT.format(org=GITHUB_ORG)
 
 
 def now_ms():

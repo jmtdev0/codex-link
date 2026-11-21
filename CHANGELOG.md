@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.2 — Publishing to a GitHub organization (2026-11-21)
+
+- Add `LINK_AGENT_GITHUB_ORG`. In unrestricted mode it lets the listener's Claude publish finished work as public repositories in one GitHub organization. Each repository must have an AI-authorship notice, dated sources, an open license (CC BY 4.0 for documents, MIT for code) and no personal or server data.
+
 ## 0.14.1 — Unrestricted Claude listener on a fenced account (2026-11-21)
 
 - Add an unrestricted listener mode (`LINK_AGENT_UNRESTRICTED=1`) for a dedicated, unprivileged account. Claude gets full tools inside that account; the listener refuses this mode as root.
