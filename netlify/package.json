@@ -1,6 +1,6 @@
 {
   "name": "agents-link-netlify",
-  "version": "0.13.2-netlify.1",
+  "version": "0.13.3-neon.1",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22.12.0" },

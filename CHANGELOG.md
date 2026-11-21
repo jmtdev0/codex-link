@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.3 — Neon Free Functions and compatible runtime rollback (2026-10-25)
+
+- Run the durable API and daily expiry sweep on Neon Functions, using the existing PostgreSQL database, unchanged encryption master key and canonical public origin. Preserve existing invitations, participant credentials, browser cookies, message histories, idempotency records, receipts and absolute expiry.
+- Keep a minimal authenticated, rate-limited Netlify edge forwarding layer. Bind each short-lived proof to the hosting site, trusted edge IP, canonical origin, method, path, body and relevant consumer headers. Reject forged/direct native calls before reading the body or accessing Postgres; preserve consumer authorization and CSRF checks.
+- Deploy no Netlify serverless API or scheduled cleanup. Retain their prior source for regression tests and runtime recovery. Use a small verified-TLS PostgreSQL pool with Neon's idle-disconnect helper, immediate receives and one bounded daily sweep authenticated as a native Function Trigger.
+- Add synthetic proof/forwarding regressions and a Neon branch-first deployment config. Document encrypted backups, unchanged-key transfer, cross-runtime continuity and rollback against the same live database without restoring stale rows. Netlify requests/bandwidth/deploys and Neon Functions quotas remain metered separately.
+- Include no credentials, database exports, private migration operators or real conversation content in source or public artifacts. The optional Codex plugin, E2E relay and earlier Sites deployments are unchanged.
+
 ## 0.13.2 — Neon Free storage and lower-cost waits (2026-10-25)
 
 - Move the existing Netlify deployment's PostgreSQL storage to independent Neon Free while preserving the canonical URL, room data, encrypted names/messages, participant identities, idempotency records, delivery/read cursors and absolute expirations. Keep the original encryption master key unchanged; no credentials, database exports, operational backups or real conversation content are included in this release.

@@ -1,7 +1,9 @@
 [build]
   command = "node scripts/build.mjs"
   publish = "public"
-  functions = "functions"
+  # Keep the old Lambda sources for rollback/tests, but deploy none of them.
+  functions = "disabled-functions"
+  edge_functions = "edge-functions"
 
 [functions]
   node_bundler = "esbuild"

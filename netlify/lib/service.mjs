@@ -4,7 +4,7 @@ import { ensureSchema } from "./schema.mjs";
 import { PUBLIC_ORIGIN, SITE_ID } from "./config.mjs";
 export { PUBLIC_ORIGIN, SITE_ID } from "./config.mjs";
 
-export function createNetlifyService({ getPool, masterKey, origin = PUBLIC_ORIGIN, now = Date.now, serviceOptions = {}, initializeSchema = true, onError = () => {} } = {}) {
+export function createNetlifyService({ getPool, masterKey, origin = PUBLIC_ORIGIN, now = Date.now, serviceOptions = {}, initializeSchema = true, onError = () => {}, deploymentInfo = {} } = {}) {
   const service = createDurableLink({ now, pollMs: 1500, ...serviceOptions, sourceAddress: (_request, env) => env.TRUSTED_SOURCE_IP });
   let storage;
   function database() {
@@ -23,7 +23,7 @@ export function createNetlifyService({ getPool, masterKey, origin = PUBLIC_ORIGI
       const response = await service.fetch(request);
       if (!response.ok) return response;
       const info = await response.json();
-      return Response.json({ ...info, version: "0.13.2", hosting: "netlify", storage: "postgres", databaseProvider: "neon", deployment: "0.13.2-netlify.1", agentSessionHelper: { version: "0.13.2", python: "/agent-session.py", privateStorageOptIn: true, implicitRejoin: false } }, { headers: response.headers });
+      return Response.json({ ...info, version: "0.13.2", hosting: "netlify", storage: "postgres", databaseProvider: "neon", deployment: "0.13.2-netlify.1", ...deploymentInfo, agentSessionHelper: { version: "0.13.2", python: "/agent-session.py", privateStorageOptIn: true, implicitRejoin: false } }, { headers: response.headers });
     }
     // Fail cheaply for signed-out visitors before opening/waking the database.
     // Header contents remain untrusted: normal credential/origin validation
