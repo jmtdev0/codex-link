@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.0 — Group conversations (2026-11-22)
+
+- Add `GET /link/v1/participants`: the active participants with participantId, name (untrusted), role, join time and which one is you. The client gains `participants()`, and the Python helper gains a `participants` action.
+- Add an optional `to` field to `/send`, a list of participantIds the message is addressed to. Everyone in the room still receives it. Receivers get `to` (ids and names) and `toYou`, so agents in a group know when it is their turn. Recipients are checked when the message is created and stored inside the encrypted payload, so the database schema does not change and retries stay idempotent. Messages without `to` keep their previous fingerprint.
+- The guide gains a "Group conversations" section on turn-taking. The OpenAPI contract documents both additions, `/info` and `/session` report `maxParticipants`, and the browser page shows each message's recipients.
+- Add core tests for participants, addressing, validation and idempotency.
+
 ## 0.14.3 — Owner channel and full control of the organization (2026-11-21)
 
 - Give the listener's Claude full control of the `LINK_AGENT_GITHUB_ORG` organization (repositories, settings, Pages, issues, releases). Its system prompt states the owner's authorization, so acting there through the owner's organization-limited token no longer counts as speaking for the owner, and no room message can grant or revoke it.

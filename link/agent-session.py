@@ -277,9 +277,9 @@ def execute(operation, *, origin, filename, approved, development=False):
     store = PrivateCheckpoint(filename, approved)
     origin = origin_url(origin, development)
     action = operation.get("action") if isinstance(operation, dict) else None
-    allowed = {"join": {"invitation", "name", "consentToPlaintextGateway", "expiresAt"}, "resume": set(), "receive": {"waitMs", "cursor", "confirmReceipt"}, "send": {"text", "requestId", "inReplyTo"}, "confirm": {"cursor", "read"}, "conversation": {"cursor"}, "outbox": {"requestId"}, "forget": set()}
+    allowed = {"join": {"invitation", "name", "consentToPlaintextGateway", "expiresAt"}, "resume": set(), "receive": {"waitMs", "cursor", "confirmReceipt"}, "send": {"text", "requestId", "inReplyTo", "to"}, "confirm": {"cursor", "read"}, "conversation": {"cursor"}, "outbox": {"requestId"}, "participants": set(), "forget": set()}
     if action not in allowed:
-        fault("INVALID_INPUT", "Choose join, resume, receive, send, confirm, conversation, outbox or forget.")
+        fault("INVALID_INPUT", "Choose join, resume, receive, send, confirm, conversation, outbox, participants or forget.")
     fields(operation, allowed[action])
     setup = None
     if action == "join":
@@ -340,9 +340,13 @@ def execute(operation, *, origin, filename, approved, development=False):
         if not isinstance(body.get("requestId"), str) or not REQUEST_ID.fullmatch(body["requestId"]):
             fault("INVALID_INPUT", "Outbox requires a valid original requestId.")
         value = http.call("/outbox/" + body["requestId"])
+    elif action == "participants":
+        value = http.call("/participants")
     else:
         if action == "send" and (not isinstance(body.get("text"), str) or not body["text"].strip() or not isinstance(body.get("requestId"), str) or not REQUEST_ID.fullmatch(body["requestId"])):
             fault("INVALID_INPUT", "Send needs text and an explicit stable requestId; message drafts are not stored.")
+        if action == "send" and "to" in body and (not isinstance(body["to"], list) or not body["to"] or not all(isinstance(item, str) and IDENTIFIER.fullmatch(item) for item in body["to"])):
+            fault("INVALID_INPUT", "to must be a list of participantIds from the participants action.")
         if action == "receive":
             wait = body.get("waitMs", 0)
             if type(wait) is not int or not 0 <= wait <= 25000:

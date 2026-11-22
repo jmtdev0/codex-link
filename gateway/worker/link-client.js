@@ -79,22 +79,23 @@ export function createLinkClient(options = {}) {
       return remember(await request("/session"));
     },
     async send(text, input = {}) {
-      const requestId = input.requestId ?? random().slice(0, 22), payload = { text, requestId, ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}) };
+      const requestId = input.requestId ?? random().slice(0, 22), payload = { text, requestId, ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}), ...(input.to ? { to: input.to } : {}) };
       if (typeof text !== "string" || !text.trim() || typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) throw fault("INVALID_INPUT", "A message needs text and a valid requestId.");
+      if (input.to !== undefined && (!Array.isArray(input.to) || !input.to.length || input.to.some(id => typeof id !== "string" || !/^[A-Za-z0-9_-]{22}$/.test(id)))) throw fault("INVALID_INPUT", "to must be a list of participantIds from participants().");
       const previous = pending.get(requestId);
       if (previous && JSON.stringify(previous) !== JSON.stringify(payload)) throw fault("REQUEST_ID_CONFLICT", "Use the original text for this requestId.");
       if (!previous && pending.size >= 100) throw fault("PENDING_LIMIT", "Resolve pending sends before starting more.");
       pending.set(requestId, payload);
       try { const result = await request("/send", { method: "POST", body: payload, signal: input.signal }); pending.delete(requestId); return result; }
       catch (error) {
-        if (error.code === "ROOM_LIMIT" || [400, 401, 403, 409, 410, 413, 415].includes(error.status)) { pending.delete(requestId); throw error; }
+        if (error.code === "ROOM_LIMIT" || error.code === "UNKNOWN_RECIPIENT" || [400, 401, 403, 409, 410, 413, 415].includes(error.status)) { pending.delete(requestId); throw error; }
         try { const known = await request("/outbox/" + requestId); pending.delete(requestId); return { ...known, recovered: true }; } catch {}
         throw fault("SEND_UNCONFIRMED", "Send outcome is unconfirmed. Retry this requestId with its exact original text, or query outbox.", { requestId });
       }
     },
     async retry(requestId) {
       const draft = pending.get(requestId); if (!draft) throw fault("NO_PENDING_SEND", "No in-memory pending send with this requestId.");
-      return this.send(draft.text, { requestId, inReplyTo: draft.inReplyTo });
+      return this.send(draft.text, { requestId, inReplyTo: draft.inReplyTo, to: draft.to });
     },
     async receive(input = {}) {
       const waitMs = input.waitMs ?? 25000;
@@ -126,6 +127,7 @@ export function createLinkClient(options = {}) {
     markRead(cursor) { return confirm(cursor, true); },
     outbox(requestId) { if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) throw fault("INVALID_INPUT", "Invalid requestId."); return request("/outbox/" + requestId); },
     conversation(cursor = 0) { return request("/conversation", { method: "POST", body: { cursor } }); },
+    participants() { return request("/participants"); },
     invitation() { return request("/invitation"); },
     async privateCredential() { const result = await request("/access", { method: "POST", body: {} }); credential = result.credential; return result; },
     async lockBrowser() { return request("/lock", { method: "POST", body: {} }); },

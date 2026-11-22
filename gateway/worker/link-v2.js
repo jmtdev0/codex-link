@@ -8,7 +8,7 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
   const enc = new TextEncoder(), dec = new TextDecoder();
   const ID = /^[A-Za-z0-9_-]{22}$/, TOKEN = /^lks2\.[A-Za-z0-9_-]{43}$/;
   const RID = /^[A-Za-z0-9_-]{1,80}$/, COOKIE = "__Host-link-session-v2";
-  const RATE_RETENTION = 86400000, MAX_TTL_MINUTES = 20160, MAX_MESSAGES = 2000, MAX_BYTES = 1048576, BATCH = 50;
+  const RATE_RETENTION = 86400000, MAX_TTL_MINUTES = 20160, MAX_MESSAGES = 2000, MAX_BYTES = 1048576, BATCH = 50, MAX_ACTIVE = 8;
   const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-frame-options": "DENY", vary: "authorization, cookie" };
   class LinkFault extends Error { constructor(status, code, message) { super(message); Object.assign(this, { status, code }); } }
   function fail(status, code, message) { throw new LinkFault(status, code, message); }
@@ -104,7 +104,16 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
     const members = await first(env.DB, "SELECT COUNT(*) AS count FROM link_participants_v2 WHERE room_id = ? AND revoked_at IS NULL", auth.room.room_id);
     return { roomId: auth.room.room_id, participantId: auth.p.participant_id, name: await open(env, auth.room, auth.p.name_ciphertext, nameAAD(auth.p)), role: auth.p.role,
       expiresAt: new Date(auth.room.expires_at).toISOString(), serverTime: new Date(now()).toISOString(), cursor: auth.p.confirmed_cursor,
-      apiBase: auth.room.audience + "/link/v1", gatewayCanReadPlaintext: true, mode: "durable-https", participantCount: members.count, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, maxWaitMs, ...waiting };
+      apiBase: auth.room.audience + "/link/v1", gatewayCanReadPlaintext: true, mode: "durable-https", participantCount: members.count, maxParticipants: MAX_ACTIVE, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, maxWaitMs, ...waiting };
+  }
+  // Active participants, so agents in a group know who they can address with "to".
+  // Names are chosen by each participant and stay untrusted text.
+  async function participants(env, auth) {
+    const rows = (await env.DB.prepare("SELECT participant_id, room_id, name_ciphertext, role, consented_at FROM link_participants_v2 WHERE room_id = ? AND revoked_at IS NULL ORDER BY consented_at, participant_id")
+      .bind(auth.room.room_id).all()).results ?? [];
+    const list = await Promise.all(rows.map(async p => ({ participantId: p.participant_id, name: await open(env, auth.room, p.name_ciphertext, nameAAD(p)), role: p.role,
+      joinedAt: new Date(p.consented_at).toISOString(), you: p.participant_id === auth.p.participant_id })));
+    return json(200, { participants: list, count: list.length, maxParticipants: MAX_ACTIVE, untrusted: true });
   }
   async function setup(request, env, url, creating) {
     const credential = token(request, url, false), input = await body(request);
@@ -143,16 +152,30 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
     return cookie(json(201, { ...await describe(env, auth), credential, ...(creating ? { invitation: await invitation(env, auth.room) } : {}) }), credential, auth.room.expires_at);
   }
   async function send(request, env, auth, input) {
-    fields(input, ["text", "requestId", "inReplyTo"], ["text", "requestId"]);
+    fields(input, ["text", "requestId", "inReplyTo", "to"], ["text", "requestId"]);
     if (typeof input.text !== "string" || !input.text.trim() || enc.encode(input.text).length > 8192 || !RID.test(input.requestId ?? "") || typeof input.requestId !== "string" || input.inReplyTo !== undefined && !ID.test(input.inReplyTo)) invalid();
+    // "to" addresses the message to some participants. Everyone in the room still
+    // receives it; it tells agents in a group who is expected to answer.
+    if (input.to !== undefined && (!Array.isArray(input.to) || !input.to.length || input.to.length >= MAX_ACTIVE || input.to.some(id => typeof id !== "string" || !ID.test(id)) ||
+      new Set(input.to).size !== input.to.length || input.to.includes(auth.p.participant_id))) invalid();
+    const to = input.to && [...input.to].sort();
     if (input.inReplyTo && !await first(env.DB, "SELECT 1 AS present FROM link_messages_v2 WHERE room_id = ? AND message_id = ?", auth.room.room_id, input.inReplyTo)) invalid();
-    const fingerprint = await hash(JSON.stringify([input.text, input.inReplyTo ?? null]));
+    // Messages without "to" keep their original fingerprint, so retries stay compatible.
+    const fingerprint = await hash(JSON.stringify(to ? [input.text, input.inReplyTo ?? null, to] : [input.text, input.inReplyTo ?? null]));
     let entry = await first(env.DB, "SELECT * FROM link_messages_v2 WHERE sender_id = ? AND request_id = ?", auth.p.participant_id, input.requestId);
     if (entry && entry.fingerprint !== fingerprint) fail(409, "REQUEST_ID_CONFLICT", "This requestId already has different content.");
     const duplicate = !!entry;
     if (!entry) {
       const messageId = random(), size = enc.encode(input.text).length;
-      const payload = { text: input.text, name: await open(env, auth.room, auth.p.name_ciphertext, nameAAD(auth.p)), ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}) };
+      let recipients;
+      if (to) {
+        // Checked only for a new message: a retry stays idempotent even if a recipient left since.
+        const rows = (await env.DB.prepare("SELECT participant_id, room_id, name_ciphertext FROM link_participants_v2 WHERE room_id = ? AND revoked_at IS NULL AND participant_id IN (" + to.map(() => "?").join(", ") + ")")
+          .bind(auth.room.room_id, ...to).all()).results ?? [];
+        if (rows.length !== to.length) fail(400, "UNKNOWN_RECIPIENT", "Each to entry must be the participantId of another active participant. See GET /participants.");
+        recipients = await Promise.all(to.map(async id => { const p = rows.find(row => row.participant_id === id); return { participantId: id, name: await open(env, auth.room, p.name_ciphertext, nameAAD(p)) }; }));
+      }
+      const payload = { text: input.text, name: await open(env, auth.room, auth.p.name_ciphertext, nameAAD(auth.p)), ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}), ...(recipients ? { to: recipients } : {}) };
       const ciphertext = await box(env, auth.room, payload, "link2/message|" + auth.room.room_id + "|" + auth.p.participant_id + "|" + messageId);
       await env.DB.batch([
         env.DB.prepare("INSERT OR IGNORE INTO link_messages_v2 (sequence, room_id, sender_id, message_id, request_id, fingerprint, payload_ciphertext, size_bytes, created_at) " +
@@ -178,8 +201,11 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
     const rows = (await env.DB.prepare("SELECT * FROM link_messages_v2 WHERE room_id = ? AND sequence > ? AND sequence <= ? " + (conversation ? "" : "AND sender_id != ? ") + "ORDER BY sequence LIMIT 51")
       .bind(...(conversation ? [auth.room.room_id, after, upper] : [auth.room.room_id, after, upper, auth.p.participant_id])).all()).results ?? [];
     const items = rows.slice(0, BATCH);
-    const messages = await Promise.all(items.map(async m => ({ ...await open(env, auth.room, m.payload_ciphertext, messageAAD(m)), messageId: m.message_id, sequence: m.sequence,
-      participantId: m.sender_id, timestamp: new Date(m.created_at).toISOString(), untrusted: true })));
+    const messages = await Promise.all(items.map(async m => {
+      const payload = await open(env, auth.room, m.payload_ciphertext, messageAAD(m));
+      return { ...payload, ...(Array.isArray(payload.to) ? { toYou: payload.to.some(r => r.participantId === auth.p.participant_id) } : {}),
+        messageId: m.message_id, sequence: m.sequence, participantId: m.sender_id, timestamp: new Date(m.created_at).toISOString(), untrusted: true };
+    }));
     const nextCursor = rows.length > BATCH ? items.at(-1).sequence : Math.max(after, upper);
     if (nextCursor > auth.p.offered_cursor) {
       await run(env.DB, "UPDATE link_participants_v2 SET offered_cursor = MAX(offered_cursor, ?) WHERE participant_id = ?", nextCursor, auth.p.participant_id);
@@ -242,7 +268,7 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
       const url = new URL(request.url);
       if (url.protocol !== "https:" || url.search || url.hash || url.username || url.password) fail(400, "HTTPS_REQUIRED", "Use HTTPS without URL credentials or query parameters.");
       if (request.headers.get("origin") && request.headers.get("origin") !== url.origin || request.headers.get("sec-fetch-site") === "cross-site") fail(403, "ORIGIN_REJECTED", "Cross-origin browser access is not allowed.");
-      if (request.method === "GET" && url.pathname === "/link/v1/info") return json(200, { api: "Link durable HTTPS", version: "0.13.0", gatewayCanReadPlaintext: true, maxWaitMs, ttlHours: MAX_TTL_MINUTES / 60, defaultTtlMinutes: 1440, maxTtlMinutes: MAX_TTL_MINUTES, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, historyOnJoin: true, resumable: true, ...waiting });
+      if (request.method === "GET" && url.pathname === "/link/v1/info") return json(200, { api: "Link durable HTTPS", version: "0.13.0", gatewayCanReadPlaintext: true, maxWaitMs, ttlHours: MAX_TTL_MINUTES / 60, defaultTtlMinutes: 1440, maxTtlMinutes: MAX_TTL_MINUTES, maxMessages: MAX_MESSAGES, maxRoomBytes: MAX_BYTES, maxParticipants: MAX_ACTIVE, participantList: true, addressing: true, historyOnJoin: true, resumable: true, ...waiting });
       if (!env.DB?.prepare || !env.DB?.batch || typeof env.LINK_GATEWAY_MASTER_KEY !== "string") fail(503, "NOT_CONFIGURED", "Durable Link storage is unavailable.");
       unb64(env.LINK_GATEWAY_MASTER_KEY, 32);
       const ip = sourceAddress(request, env); if (typeof ip !== "string" || !ip || ip.length > 128) fail(503, "RATE_PROTECTION_UNAVAILABLE", "Source rate protection is unavailable.");
@@ -257,6 +283,7 @@ export function createDurableLink({ now = Date.now, maxRooms = 100, maxCreates =
       const auth = await authenticate(request, env, url, { allowRevoked: removing, allowClosed: closing });
       await rate(env.DB, "link2:participant:" + auth.p.participant_id, maxRequests);
       if (request.method === "GET" && url.pathname === "/link/v1/session") return json(200, await describe(env, auth));
+      if (request.method === "GET" && url.pathname === "/link/v1/participants") return await participants(env, auth);
       if (request.method === "POST" && url.pathname === "/link/v1/access") { fields(await body(request), []); return json(200, { credential: auth.credential, expiresAt: new Date(auth.room.expires_at).toISOString(), scope: "this participant only; never share with peers" }); }
       if (request.method === "GET" && url.pathname === "/link/v1/invitation") {
         if (auth.p.role !== "owner") fail(403, "OWNER_REQUIRED", "Only the owner can recover the room invitation.");
